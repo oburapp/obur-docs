@@ -41,6 +41,7 @@ erDiagram
     string name
     float lat
     float lng
+    geography location
     string address_note
     string google_places_id
     uuid added_by FK
@@ -164,6 +165,10 @@ erDiagram
 ## Design Decisions
 
 **Coordinate-based venue identity.** `lat` and `lng` are the primary identifier for a venue, not the name. Duplicate detection queries for existing venues within a 50-metre radius before allowing a new insert.
+
+**`VENUE.location` is database-generated, not application-maintained.** It's a PostGIS `geography` computed from `lat`/`lng` via `GENERATED ALWAYS AS (...) STORED`, so it can never drift out of sync with the columns it's derived from. It backs the 50-metre duplicate check (`ST_DWithin`).
+
+**Venue name search uses a `pg_trgm` trigram index on `name`, not full-text search.** See [ADR-0003](../adr/0003-trigram-venue-name-search.md): trigram similarity is language-agnostic and typo-tolerant, which a language-specific `tsvector` config isn't — a requirement given venue names appear in many languages and Obur's global-expansion plans.
 
 **CHECKIN and CHECKIN_PRODUCT are separated.** A single check-in can contain multiple products (a user may eat several dishes in one visit). Each product carries its own rating. Venue-level ratings (service, ambiance, value) are stored once per check-in.
 
