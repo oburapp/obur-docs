@@ -13,8 +13,8 @@ made — not drafted ahead of time.
 `NNNN-short-title.md`, zero-padded and sequential:
 
 ```
-0002-venue-identity-by-coordinate.md
-0003-checkin-product-separation.md
+0004-venue-identity-by-coordinate.md
+0005-checkin-product-separation.md
 ```
 
 ## Index
@@ -22,3 +22,5 @@ made — not drafted ahead of time.
 | ID | Title | Status |
 |----|-------|--------|
 | [0001](0001-test-database-strategy.md) | Test Database Strategy | Accepted |
+| [0002](0002-defer-google-places-verification.md) | Defer Google Places Verification | Accepted |
+| [0003](0003-trigram-venue-name-search.md) | Trigram-Based Venue Name Search | Accepted |
