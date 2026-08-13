@@ -78,6 +78,65 @@ but the human always types and executes the command.
 - When adding a new environment variable, update `.env.example` immediately
 - Never log or print environment variable values
 
+### Two kinds of configuration value
+
+Every config value falls into one of two categories, and they're held to
+different standards:
+
+**Reaches production** — anything a real user's device (web browser, iOS,
+Android) will actually hit: API URLs, DB/cache connection strings, ports,
+credentials, third-party endpoints. **No hardcoded fallback, ever.** If
+it's missing or misconfigured, the app must fail immediately and loudly at
+startup — never silently resolve to a plausible-looking value that hides
+the real problem a few steps downstream. This must work correctly across
+every device the product ships to, not just the machine it was written on.
+
+**Local-only** — dev tooling: docker-compose, test fixtures, local
+defaults. A default is fine here for convenience, but two rules still
+apply:
+1. If a value already lives somewhere (e.g. `.env`), every other place
+   that needs it must *read from there*, not hold its own independent
+   copy — two copies of the same fact will eventually drift out of sync.
+2. The default must stay portable across different developers' machines.
+   A fixed local port, for example, can collide with something already
+   running on someone else's setup — make it overridable, don't assume a
+   value will always be free just because it is on your machine.
+
+When in doubt: if you can imagine this code running against a real user in
+production, treat it as the first category, not the second.
+
+---
+
+## Task Runner
+
+Every repository that has commands worth wrapping (lint, format, test,
+migrate, run the dev server, ...) has its own `justfile` at its root,
+using [just](https://github.com/casey/just). Run `just --list` (or bare
+`just`) in a repo to see what's available there — the exact recipes vary
+per repo (a Next.js app's recipes look different from a FastAPI one's),
+but the tool and the discovery command (`just --list`) are the same
+everywhere.
+
+- Recipes wrap existing commands (`uv run pytest`, `docker compose up`,
+  ...) — they don't replace the standards that govern *what* those
+  commands do (testing strategy, code style, etc.), just give a short,
+  consistent name for running them.
+- A `check` recipe (lint + typecheck + test) is the standard name for "run
+  everything CI will run" — add it to every repo's justfile as those
+  checks come online.
+- Don't add a justfile to a repository until it has real commands to
+  wrap — an empty or placeholder justfile isn't worth the file.
+- `just` is a project dependency like any other, even though it's a
+  system-level install rather than something `uv`/`npm` can pin
+  (`winget install --id Casey.Just -e` on Windows). Every justfile pins
+  the floor with `set minimum-version := "X.Y.Z"` at the top, the same way
+  `pyproject.toml` pins `requires-python` — a version older than that
+  should fail loudly instead of silently behaving differently.
+- Justfiles are living documents: when a new recurring command shows up
+  (a new check, a new one-off script someone keeps re-typing), add it as
+  a recipe in the same PR — don't let the justfile drift stale behind
+  what people actually run.
+
 ---
 
 ## Documentation Standards
@@ -143,6 +202,52 @@ Rules:
   under `[Unreleased]`; a dated section is only cut for a major documentation
   milestone (e.g. PDD v2.0)
 - Versions are listed newest-first (reverse chronological)
+
+### Versioning and Releases
+
+One version number, three places it has to agree:
+
+| Where | What it's for |
+|-------|----------------|
+| The package manifest (`pyproject.toml` for `obur-backend`, `package.json` for `obur-web`, `pubspec.yaml` for `obur-mobile`) | The code's own declared version |
+| `CHANGELOG.md`'s `## [X.Y.Z] - YYYY-MM-DD` heading | Human-readable summary of what's in that version |
+| A git tag, `vX.Y.Z` | A permanent pointer to the exact commit that version was cut from |
+
+**What MAJOR.MINOR.PATCH means:**
+
+- **PATCH** (`0.1.0` → `0.1.1`) — bug fix, no behavior contract changed
+- **MINOR** (`0.1.1` → `0.2.0`) — new capability, backward compatible
+- **MAJOR** (`0.x` → `1.0.0`, or later `1.x` → `2.0.0`) — breaks existing
+  clients (changed response shape, removed endpoint, new required field)
+
+While the version stays `0.x.y`, the public API isn't considered stable
+yet — that's expected pre-launch. Bump to `1.0.0` once real users (via
+`obur-web`/`obur-mobile` in production) actually depend on the contract
+not breaking.
+
+**Bump at a meaningful milestone or PR, never per-commit.** A version
+number describes a working, usable state of the software — most
+individual commits in a PR aren't independently that (e.g. "add
+docker-compose" isn't a release on its own). Tag the PR/milestone as a
+whole, not each commit inside it.
+
+**Release flow**, once the feature PR lands on `main`. Branch protection
+applies to this too — there is no direct-to-`main` shortcut, not even for
+a one-line CHANGELOG edit:
+
+1. New branch off the updated `main`, e.g. `chore/release-X.Y.Z`
+2. One commit: rename `CHANGELOG.md`'s `## [Unreleased]` to
+   `## [X.Y.Z] - YYYY-MM-DD` (today's date), add a fresh empty
+   `## [Unreleased]` above it, and set the manifest's version to match —
+   `chore: release X.Y.Z`
+3. Push, open a PR, get it reviewed and squash-merged into `main` like any
+   other change
+4. Pull the updated `main` locally and tag the new commit: `git tag vX.Y.Z`
+5. Push the tag: `git push origin vX.Y.Z`
+
+Tagging, like committing, is run by a human — Claude may prepare the
+CHANGELOG/manifest edit and suggest the commands, never runs `git tag` or
+`git push` itself.
 
 ---
 
