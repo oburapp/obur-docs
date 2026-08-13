@@ -13,12 +13,12 @@ made — not drafted ahead of time.
 `NNNN-short-title.md`, zero-padded and sequential:
 
 ```
-0001-single-direction-follow.md
 0002-venue-identity-by-coordinate.md
+0003-checkin-product-separation.md
 ```
 
 ## Index
 
 | ID | Title | Status |
 |----|-------|--------|
-| — | *No ADRs recorded yet* | — |
+| [0001](0001-test-database-strategy.md) | Test Database Strategy | Accepted |
