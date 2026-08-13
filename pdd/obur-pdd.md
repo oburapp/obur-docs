@@ -207,7 +207,10 @@ The same search box returns different results depending on the current page:
 
 ```sql
 USER
-  id            UUID PK
+  id                UUID PK
+  auth_provider     VARCHAR                  -- "clerk" today; not hardcoded elsewhere
+  auth_provider_id  VARCHAR                  -- that provider's user ID
+                                              -- UNIQUE (auth_provider, auth_provider_id)
   username      VARCHAR
   email         VARCHAR UNIQUE
   bio           TEXT
@@ -348,6 +351,8 @@ USER_BADGE
 **`visited_at` and `created_at` are kept separate.** A user may log last week's meal today. Badge calculations are based on `visited_at`.
 
 **Global-ready design principles.** All timestamps are stored as UTC; the `visited_tz` field records the user's local timezone at the time of the visit and is used in badge calculations. User-facing labels (`VENUE_CATEGORY`, `GLOBAL_PRODUCT_TYPE`, `BADGE`) live in translation tables; adding a new language to the system only requires adding the relevant translation rows. `slug` fields provide a language-independent reference: the code uses `"food"`, and the display resolves independently of language. `country_code` follows ISO 3166-1 alpha-2, `locale` follows BCP 47, `timezone` follows the IANA standard.
+
+**Auth identity is provider-agnostic by field name.** `USER.auth_provider` ("clerk" today) and `auth_provider_id` are deliberately not Clerk-specific field names. Code outside the auth module never sees a provider-specific type — only this column pair. Switching or adding an auth provider later means new rows, not a rename migration. Kept in sync via the provider's webhooks (not just at first login), since identity fields can change on the provider's side independently of Obur.
 
 ---
 
