@@ -24,5 +24,8 @@ made — not drafted ahead of time.
 | [0001](0001-test-database-strategy.md) | Test Database Strategy | Accepted |
 | [0002](0002-defer-google-places-verification.md) | Defer Google Places Verification | Accepted |
 | [0003](0003-trigram-venue-name-search.md) | Trigram-Based Venue Name Search | Accepted |
-| [0004](0004-checkin-visibility-single-toggle.md) | Single Visibility Toggle for Check-ins | Accepted |
+| [0004](0004-checkin-visibility-single-toggle.md) | Single Visibility Toggle for Check-ins | Superseded by [0006](0006-three-tier-visibility-and-close-friends.md) |
 | [0005](0005-checkin-fields-editable-products-immutable.md) | Check-in Fields Are Editable, Rated Products Are Not | Accepted |
+| [0006](0006-three-tier-visibility-and-close-friends.md) | Three-Tier Visibility, Close Friends, and Bookmarks as a Private Signal | Accepted |
+| [0007](0007-fractional-indexing-for-list-ordering.md) | Fractional Indexing for List Item Ordering | Accepted |
+| [0008](0008-synchronous-in-app-notifications.md) | Light, Synchronous In-App Notifications | Accepted |
