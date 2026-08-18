@@ -3,6 +3,11 @@
 **Date:** 2026-08-18
 **Status:** Accepted
 
+> **2026-08-18 update:** `is_public` (referenced below as one of the
+> editable fields) was replaced by the three-tier `visibility` field in
+> ADR-0006. This ADR's own decision — which fields are editable at all —
+> is unaffected; only that one field's name changed.
+
 ## Context
 
 docs/roadmap.md's Phase 3 (obur-backend) says a user may edit their own

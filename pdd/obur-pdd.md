@@ -111,9 +111,11 @@ A friendship model requiring mutual approval increases cold-start friction. The 
 
 Free-text comments carry moderation overhead and toxic-content risk. DMs, combined with the asymmetric follow model, would create an unwanted-message vector. Letterboxd has never added DMs despite years of user requests. The same decision applies to Obur.
 
-### Default Visibility: Public
+### Visibility: Three Tiers, Not a Public/Private Toggle
 
-To encourage content creation and keep the feed alive, check-in visibility defaults to public. Users can switch it to private if they want; private check-ins still contribute to aggregate statistics.
+Check-ins, lists, and saved venues share one three-tier visibility model: **public**, **close friends**, or **private**. Check-ins and lists default to public, to encourage content creation and keep the feed alive; saved venues default to private, since saving a venue ("been here" / "want to go" / "favorite") is a personal tracking action first, not something assumed to be shared.
+
+A "followers-only" tier was considered and rejected: Obur's follow model is one-directional with no approval step (see §11), so "followers-only" would mean "visible to literally anyone who chooses to follow" — not a real privacy boundary. **Close friends** solves this instead: a manually curated allow-list the user builds by hand from among the people who already follow them, the same model Letterboxd uses for its own diary/review privacy. It requires deliberate action from the owner, not just a follow click from the viewer, and it's revoked automatically if the underlying follow relationship ever ends. See [ADR-0006](https://github.com/oburapp/obur-docs/blob/main/adr/0006-three-tier-visibility-and-close-friends.md).
 
 ### Business Hours Out of Scope
 
@@ -183,11 +185,14 @@ The same search box returns different results depending on the current page:
 | Product page | Check-ins at that venue + same product ranked across other venues | P0 |
 | Profile | Check-ins, favorites, lists, achievements | P0 |
 | Badge system | Bronze / silver / gold tiers, rarity display | P0 |
-| List creation | User curation, map display | P1 |
-| Save venue | Been / want to go / favorite | P1 |
+| List creation | User curation, map display, freely reorderable | P1 |
+| Save venue | Been / want to go / favorite; private by default, owner may share | P1 |
+| Close friends | Manually curated subset of followers, grants access to "close friends"-visibility content | P1 |
+| Like | Check-ins and lists; a visible social signal | P1 |
+| Bookmark | Private save-for-later on a check-in or list; never a social signal, never shown to anyone else | P1 |
 | Map view | Profile- and list-based | P1 |
 | Notifications | Like, follow, badge, venue verification | P1 |
-| Visibility control | Public / private toggle per check-in | P1 |
+| Visibility control | Public / close friends / private, per check-in, list, or saved venue | P1 |
 | Travel mode | Manual city selector | P1 |
 
 ### v2.0 (Next Release)
@@ -228,6 +233,17 @@ FOLLOW
   following_id  UUID FK → USER
   created_at    TIMESTAMPTZ
   PRIMARY KEY (follower_id, following_id)
+                                          -- CHECK (follower_id != following_id)
+
+CLOSE_FRIEND
+  user_id       UUID                     -- the curator
+  friend_id     UUID                     -- one of user_id's followers, manually added
+  created_at    TIMESTAMPTZ
+  PRIMARY KEY (user_id, friend_id)
+  FOREIGN KEY (friend_id, user_id) REFERENCES FOLLOW (follower_id, following_id)
+    ON DELETE CASCADE                    -- friend_id must currently follow user_id;
+                                          -- row is auto-removed the moment that
+                                          -- follow is undone — see ADR-0006
 
 VENUE_CATEGORY
   id            UUID PK
@@ -260,6 +276,8 @@ VENUE_SAVE
   user_id       UUID FK → USER
   venue_id      UUID FK → VENUE
   type          VARCHAR                  -- visited | wishlist | favorite
+  visibility    VARCHAR DEFAULT 'private' -- public | close_friends | private
+                                          -- UNIQUE (user_id, venue_id, type)
   created_at    TIMESTAMPTZ
 
 GLOBAL_PRODUCT_TYPE
@@ -290,7 +308,7 @@ CHECKIN
   rating_value    SMALLINT              -- 1-4, nullable ("worth it?")
   note          TEXT
   photo_url     VARCHAR
-  is_public     BOOLEAN DEFAULT TRUE
+  visibility    VARCHAR DEFAULT 'public' -- public | close_friends | private — see ADR-0006
   visited_at    DATE                    -- visit date entered by the user; may not
                                           -- be in the future, checked against the
                                           -- visitor's own visited_tz, not the server's
@@ -307,25 +325,54 @@ CHECKIN_PRODUCT
                                           -- can't be rated twice in the same check-in
   rating        SMALLINT NOT NULL       -- 1-4; immutable once created — see ADR-0005
 
-LIKE
+CHECKIN_LIKE
   user_id       UUID FK → USER
   checkin_id    UUID FK → CHECKIN
   created_at    TIMESTAMPTZ
   PRIMARY KEY (user_id, checkin_id)
+
+CHECKIN_BOOKMARK
+  user_id       UUID FK → USER
+  checkin_id    UUID FK → CHECKIN
+  created_at    TIMESTAMPTZ
+  PRIMARY KEY (user_id, checkin_id)      -- private; no count exposed anywhere
 
 LIST
   id            UUID PK
   user_id       UUID FK → USER
   title         VARCHAR
   description   TEXT
-  is_public     BOOLEAN DEFAULT TRUE
+  visibility    VARCHAR DEFAULT 'public' -- public | close_friends | private
   created_at    TIMESTAMPTZ
 
 LIST_ITEM
   id            UUID PK
   list_id       UUID FK → LIST
-  venue_id      UUID FK → VENUE
-  order         INTEGER
+  venue_id      UUID FK → VENUE          -- UNIQUE (list_id, venue_id)
+  position      VARCHAR COLLATE "C"      -- fractional-indexing key — see ADR-0007
+  created_at    TIMESTAMPTZ
+
+LIST_LIKE
+  user_id       UUID FK → USER
+  list_id       UUID FK → LIST
+  created_at    TIMESTAMPTZ
+  PRIMARY KEY (user_id, list_id)
+
+LIST_BOOKMARK
+  user_id       UUID FK → USER
+  list_id       UUID FK → LIST
+  created_at    TIMESTAMPTZ
+  PRIMARY KEY (user_id, list_id)         -- private; no count exposed anywhere
+
+NOTIFICATION
+  id            UUID PK
+  user_id       UUID FK → USER           -- recipient
+  type          VARCHAR                  -- new_follower | checkin_like | list_like
+  actor_id      UUID FK → USER, nullable -- who did it
+  target_type   VARCHAR                  -- checkin | list | user
+  target_id     UUID                     -- not a real FK — see ADR-0008
+  read_at       TIMESTAMPTZ, nullable
+  created_at    TIMESTAMPTZ
 
 BADGE
   id            UUID PK
@@ -357,6 +404,14 @@ USER_BADGE
 **Historical data is never deleted.** If a venue closes, `status` becomes `closed` and its check-ins remain as an archive. If a product is removed from the menu, `is_available` becomes `false` — it's no longer suggested for new check-ins but still appears in past records.
 
 **`visited_at` and `created_at` are kept separate.** A user may log last week's meal today. Badge calculations are based on `visited_at`.
+
+**One shared `visibility` field (public / close friends / private) governs CHECKIN, LIST, and VENUE_SAVE alike, instead of a separate privacy concept per resource.** A "followers-only" tier was rejected — Obur's follow model requires no approval, so it would grant access to literally anyone who chooses to follow. `CLOSE_FRIEND` is a manually curated allow-list instead, built from a user's existing followers, revoked automatically the moment the underlying follow ends. See ADR-0006.
+
+**Likes are a visible signal; bookmarks are private — two separate concepts, two separate table pairs.** `CHECKIN_LIKE`/`LIST_LIKE` are public counts. `CHECKIN_BOOKMARK`/`LIST_BOOKMARK` are personal save-for-later notes nobody else can ever see — there's no bookmark count anywhere in the product. See ADR-0006.
+
+**LIST_ITEM ordering uses fractional indexing, not an integer column.** Reordering, inserting, or removing an item writes only that one row — no renumbering of neighboring items regardless of list size. See ADR-0007.
+
+**NOTIFICATION rows are written synchronously, in the same transaction as the event that causes them.** No queue, no background worker. `read_at` lives on the backend row, so read state is automatically consistent across every device a user is signed into. See ADR-0008.
 
 **Global-ready design principles.** All timestamps are stored as UTC; the `visited_tz` field records the user's local timezone at the time of the visit and is used in badge calculations. User-facing labels (`VENUE_CATEGORY`, `GLOBAL_PRODUCT_TYPE`, `BADGE`) live in translation tables; adding a new language to the system only requires adding the relevant translation rows. `slug` fields provide a language-independent reference: the code uses `"food"`, and the display resolves independently of language. `country_code` follows ISO 3166-1 alpha-2, `locale` follows BCP 47, `timezone` follows the IANA standard.
 
@@ -472,13 +527,16 @@ Step 4: Tell the story
 
 Step 5: Share
   → Summary card: venue, products, and ratings
-  → Toggle: public (default: on) — the only visibility control; a
-    public check-in counts toward the venue/product aggregate, a
-    private one doesn't. There is no separate "contribute to
-    statistics" toggle (see ADR-0004 in obur-docs: an earlier draft
-    of this flow had one, but its own description contradicted
-    itself — it claimed to count toward the aggregate "even when
-    off," which made it a toggle with no actual effect).
+  → Visibility: public (default) / close friends / private — a
+    public check-in counts toward the venue/product aggregate; a
+    close-friends or private one doesn't. There is no separate
+    "contribute to statistics" toggle (see ADR-0004 in obur-docs: an
+    earlier draft of this flow had one, but its own description
+    contradicted itself — it claimed to count toward the aggregate
+    "even when off," which made it a toggle with no actual effect).
+    "Close friends" resolves against the viewer's manually curated
+    close-friends list on the check-in owner's account (see §11 and
+    ADR-0006) — it is not a "followers-only" option.
   → Save
 ```
 
@@ -490,7 +548,11 @@ The same experience is packaged as a single check-in. The backend creates one `C
 
 ## 11. Social Graph
 
-**One-directional follow.** No mutual approval required. If user A follows user B, A sees B's public check-ins and lists in their feed. B does not need to follow A back.
+**One-directional follow.** No mutual approval required. If user A follows user B, A sees B's public check-ins and lists in their feed. B does not need to follow A back. A user cannot follow themselves. Either side can end the relationship: the follower unfollowing, or the followed user removing that follower from their own followers list (Instagram-style).
+
+**Close friends: a manually curated allow-list, not a follow-graph feature.** Because following requires no approval, "my followers" isn't a meaningful privacy boundary on its own — anyone can join it just by clicking follow. A user who wants a real private-sharing tier instead builds a **close friends** list by hand, adding people from among their existing followers. Marking a check-in, list, or saved venue as "close friends" visibility shares it with exactly that curated list, not with followers in general. If the user later stops following someone (or removes them as a follower), that person drops off the close-friends list automatically — close-friend status can never outlive the follow relationship it depended on. Modeled directly on Letterboxd's own close-friends feature, the closest real-world comparable. See ADR-0006.
+
+**Likes are public; bookmarks are private.** A like on a check-in or list is a visible social signal — anyone who can see the content can see (and add to) its like count. A bookmark is the opposite: a personal "save this for later" note that only the person who made it can ever see. There is no bookmark count shown anywhere, on any check-in or list, to anyone. Liking or bookmarking something a user can't see (a private check-in that isn't theirs, for example) is not possible — visibility is checked first either way.
 
 **Notification triggers:**
 
@@ -499,6 +561,8 @@ The same experience is packaged as a single check-in. The backend creates one `C
 - List like
 - Badge earned
 - Verification of an added venue
+
+Notifications are written synchronously by the same action that causes them (see ADR-0008) — there's no delay or background processing step between "someone followed you" and the notification existing.
 
 ---
 

@@ -1,7 +1,16 @@
 # ADR-0004: Single Visibility Toggle for Check-ins
 
 **Date:** 2026-08-18
-**Status:** Accepted
+**Status:** Superseded by [ADR-0006](0006-three-tier-visibility-and-close-friends.md)
+
+> **2026-08-18 update:** Phase 4 replaced the boolean `is_public` this
+> ADR established with a three-tier `visibility` field
+> (`public`/`close_friends`/`private`), shared across `CHECKIN`, `LIST`,
+> and `VENUE_SAVE` — see ADR-0006. This ADR's actual point — that feed
+> visibility and aggregate-rating inclusion are one decision, not two
+> independent toggles — still holds; only the number of tiers changed.
+> Kept here for the historical record of why the second toggle was
+> dropped.
 
 ## Context
 
