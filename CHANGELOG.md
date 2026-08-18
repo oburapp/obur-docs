@@ -25,6 +25,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   visibility, venue-level ratings) are editable after creation; its
   rated products and their ratings are not — verified against how
   Untappd and MyFitnessPal each handle this
+- ADR-0006: check-in/list/saved-venue visibility replaced with a shared
+  three-tier model (public / close friends / private); close friends is
+  a manually curated subset of followers, not a "followers-only" tier —
+  verified against Letterboxd's own close-friends feature as the closest
+  real-world comparable. Also covers why likes stay a visible signal
+  while bookmarks are always private, kept as separate table pairs.
+  Supersedes ADR-0004.
+- ADR-0007: `LIST_ITEM` ordering uses fractional indexing instead of an
+  integer column, so inserting/moving/removing an item never renumbers
+  its neighbors — includes the `COLLATE "C"` requirement found via an
+  empirical test against the real database (the default locale-aware
+  collation silently breaks the algorithm's byte-ordering assumption)
+- ADR-0008: notifications are written synchronously, in the same
+  transaction as the event that causes them — no queue, no background
+  worker; `read_at` lives on the backend row so read state is
+  automatically consistent across every device
 
 ### Changed
 
@@ -35,3 +51,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `deleted_at`, the `CHECKIN_PRODUCT` uniqueness constraint); Check-in
   Flow §10 Step 5 rewritten to describe the single visibility toggle
   instead of the dropped second toggle
+- Entity-relationship diagram and PDD §7 Data Model: `CHECKIN.is_public`
+  and `LIST.is_public` replaced with the shared `visibility` field;
+  added `CLOSE_FRIEND`, `CHECKIN_LIKE`, `CHECKIN_BOOKMARK`, `LIST_LIKE`,
+  `LIST_BOOKMARK`, and `NOTIFICATION`; `LIST_ITEM.order` (integer)
+  replaced with `position` (fractional-indexing string); `VENUE_SAVE`
+  gained a `visibility` field, defaulting to private
+- PDD §4, §6, §10, §11: visibility control, feature catalog, the
+  check-in share step, and the Social Graph section all rewritten for
+  the three-tier model, close friends, and the like/bookmark split
+- ADR-0004's status changed to "Superseded by ADR-0006"; its own point
+  (feed visibility and aggregate inclusion are one decision) still
+  holds, only the tier count changed
