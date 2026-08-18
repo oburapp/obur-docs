@@ -19,6 +19,7 @@ erDiagram
     char country_code
     string locale
     string timezone
+    string role
     timestamp created_at
   }
   FOLLOW {
@@ -89,6 +90,7 @@ erDiagram
     bool is_public
     date visited_at
     string visited_tz
+    timestamp deleted_at
     timestamp created_at
   }
   CHECKIN_PRODUCT {
@@ -172,7 +174,13 @@ erDiagram
 
 **CHECKIN and CHECKIN_PRODUCT are separated.** A single check-in can contain multiple products (a user may eat several dishes in one visit). Each product carries its own rating. Venue-level ratings (service, ambiance, value) are stored once per check-in.
 
-**Historical data is never deleted.** When a venue closes, `status` is set to `closed`. When a product is removed from a menu, `is_available` is set to `false`. Past check-ins remain visible as an archive.
+**Historical data is never deleted.** When a venue closes, `status` is set to `closed`. When a product is removed from a menu, `is_available` is set to `false`. Past check-ins remain visible as an archive. A check-in itself is never truly deleted either — `CHECKIN.deleted_at` marks it removed without dropping the row, so a badge or aggregate already computed from it can't be retroactively corrupted. Only a separate admin action can permanently purge one, for moderation/takedown cases.
+
+**A check-in's own fields are editable; its rated products are not.** See [ADR-0005](../adr/0005-checkin-fields-editable-products-immutable.md): fixing a wrong product or rating means deleting the check-in and creating a new one, not editing it in place — verified against how comparable apps (Untappd) handle this.
+
+**`is_public` is the only visibility control on a check-in.** See [ADR-0004](../adr/0004-checkin-visibility-single-toggle.md): an earlier draft had a second "contribute to statistics" toggle; it was dropped for being self-contradictory and redundant with `is_public`.
+
+**Authorization has two layers: ownership, and an admin override.** A user may act on their own resources (check-ins today; lists and likes once Phase 4 exists); `USER.role = 'admin'` may act on anyone's. `role` is never settable through any user-facing endpoint or the Clerk webhook — the first admin account is set directly in the database, by hand.
 
 **`visited_at` and `created_at` are separate fields.** A user may log a visit days after it occurred. Badge calculations use `visited_at`. The `visited_tz` field stores the IANA timezone at the time of visit for correct local-time calculations.
 

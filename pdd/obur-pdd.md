@@ -219,6 +219,8 @@ USER
   country_code  CHAR(2)                  -- ISO 3166-1 alpha-2: "TR", "US", "DE"
   locale        VARCHAR DEFAULT 'tr'     -- BCP 47: "tr", "en", "de" — UI language
   timezone      VARCHAR                  -- IANA: "Europe/Istanbul", "America/New_York"
+  role          VARCHAR DEFAULT 'user'   -- user | admin — never settable via any
+                                          -- user-facing endpoint or the Clerk webhook
   created_at    TIMESTAMPTZ
 
 FOLLOW
@@ -289,15 +291,21 @@ CHECKIN
   note          TEXT
   photo_url     VARCHAR
   is_public     BOOLEAN DEFAULT TRUE
-  visited_at    DATE                    -- visit date entered by the user
+  visited_at    DATE                    -- visit date entered by the user; may not
+                                          -- be in the future, checked against the
+                                          -- visitor's own visited_tz, not the server's
   visited_tz    VARCHAR                 -- IANA timezone at time of visit — used for badge calculation
+  deleted_at    TIMESTAMPTZ             -- NULL unless soft-deleted; a check-in already
+                                          -- factored into a badge or aggregate must
+                                          -- never be truly deleted (see ADR-0005)
   created_at    TIMESTAMPTZ             -- log timestamp (UTC)
 
 CHECKIN_PRODUCT
   id            UUID PK
   checkin_id    UUID FK → CHECKIN
-  product_id    UUID FK → PRODUCT
-  rating        SMALLINT NOT NULL       -- 1-4
+  product_id    UUID FK → PRODUCT       -- UNIQUE (checkin_id, product_id): a product
+                                          -- can't be rated twice in the same check-in
+  rating        SMALLINT NOT NULL       -- 1-4; immutable once created — see ADR-0005
 
 LIKE
   user_id       UUID FK → USER
@@ -464,8 +472,13 @@ Step 4: Tell the story
 
 Step 5: Share
   → Summary card: venue, products, and ratings
-  → Toggle 1: public (default: on)
-  → Toggle 2: contribute to statistics (counts toward the aggregate even when off)
+  → Toggle: public (default: on) — the only visibility control; a
+    public check-in counts toward the venue/product aggregate, a
+    private one doesn't. There is no separate "contribute to
+    statistics" toggle (see ADR-0004 in obur-docs: an earlier draft
+    of this flow had one, but its own description contradicted
+    itself — it claimed to count toward the aggregate "even when
+    off," which made it a toggle with no actual effect).
   → Save
 ```
 

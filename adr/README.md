@@ -13,8 +13,8 @@ made — not drafted ahead of time.
 `NNNN-short-title.md`, zero-padded and sequential:
 
 ```
-0004-venue-identity-by-coordinate.md
-0005-checkin-product-separation.md
+0006-venue-identity-by-coordinate.md
+0007-follow-model-single-direction.md
 ```
 
 ## Index
@@ -24,3 +24,5 @@ made — not drafted ahead of time.
 | [0001](0001-test-database-strategy.md) | Test Database Strategy | Accepted |
 | [0002](0002-defer-google-places-verification.md) | Defer Google Places Verification | Accepted |
 | [0003](0003-trigram-venue-name-search.md) | Trigram-Based Venue Name Search | Accepted |
+| [0004](0004-checkin-visibility-single-toggle.md) | Single Visibility Toggle for Check-ins | Accepted |
+| [0005](0005-checkin-fields-editable-products-immutable.md) | Check-in Fields Are Editable, Rated Products Are Not | Accepted |
