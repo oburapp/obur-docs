@@ -342,3 +342,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   silently split one tag into two. No new moderation path needed for
   either — abuse is reportable as part of the check-in/list it's
   attached to.
+- PDD §17, §18: named PostgreSQL Row Level Security (RLS) as the
+  concrete mechanism for the database-level layer the Governing
+  Principle already called for, directly addressing the failure mode
+  behind two real bugs already found this project (a query forgetting
+  to call `can_view`). Framed as a development-time discipline, not a
+  post-launch retrofit: evaluated per query/endpoint as the backend is
+  actually built (deciding which queries need a bypass, like badge
+  rarity or admin tooling, is far cheaper to get right once than to
+  re-audit everything already written later).

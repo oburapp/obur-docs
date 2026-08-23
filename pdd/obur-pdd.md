@@ -1020,6 +1020,8 @@ Everything in this document that touches authorization — `can_view`, `ensure_v
 
 That principle has a real boundary, though, worth stating explicitly rather than assuming it's covered: everything above protects the *application's own access path* — every API request passes through `can_view` because there is no other way to ask the API for data. It does nothing for someone who bypasses the application entirely and reaches the data store directly (a compromised database credential, an exposed backup, a leaked connection string). `can_view` is application code; it isn't a property of the database itself. Closing that gap needs a second, separate layer: the database encrypted at rest (so a stolen disk or backup isn't readable), and the database reachable only from the backend service, never directly from the outside. This is infrastructure/hosting configuration, not application logic — see §18 for what still needs verifying here before launch.
 
+**PostgreSQL Row Level Security (RLS) is the concrete mechanism for that second layer, and belongs to the backend's own development discipline, not a retrofit project.** RLS lets the database itself enforce a visibility policy on a table (e.g. a `CHECKIN` row is only readable if `visibility = 'public'`, or the requester is its owner, or a qualifying close friend) so that even a query that forgets to call `can_view` — the exact failure mode behind the two real bugs already found this project (an existence-leak and a stale-visibility bug, §17 above) — still can't return a row it shouldn't. It's evaluated as each query and endpoint is written during backend development, not bolted on after the fact: some queries (badge `rarity_pct`, cross-venue product ranking, admin moderation tooling) deliberately need to see across every user's data, and deciding which access pattern each new query falls into is far cheaper to get right once, at the moment that query is first written, than to re-audit across everything already built if RLS is introduced only after the backend is otherwise complete.
+
 ### Photo Upload Standards
 
 Applies uniformly to both upload surfaces that actually exist — `CHECKIN.photo_url` and `USER.avatar_url`. A venue has no upload surface of its own (§13); a list has no cover image at all (§6, §13).
@@ -1058,6 +1060,7 @@ The following decisions are not yet finalized and will be evaluated once initial
 | Meilisearch migration threshold | Once PostgreSQL FTS hits a performance wall |
 | Fake-account / fraud-detection tooling (phone verification, IP correlation, etc.) | After real abuse is actually observed — see §17 |
 | Database-level isolation: does Railway's Postgres encrypt at rest by default, and is it network-reachable only from the backend or directly from the outside? | Research Railway's actual guarantees before launch — see §17 |
+| Row Level Security (RLS) policies, table by table | Not a "revisit later" item like the rows above — evaluated per query/endpoint as the backend is actually built, see §17 |
 | Accessibility (screen readers, color contrast, keyboard navigation) | Not addressed at MVP — real long-term concern, but not urgent enough to block launch; revisit once core product is stable |
 
 ### Needs Legal Research, Not User Data
