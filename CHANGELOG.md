@@ -47,6 +47,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (Google match + check-ins, or check-ins + admin review — never a
   human-reviews-everything model, never affects ranking). Supersedes
   ADR-0002 — the "concrete verification feature" it said to wait for.
+- ADR-0010: the schema behind blocking and reporting, neither of which
+  had a table anywhere despite both being P0 and specified at length in
+  §11. `BLOCK` stores direction (like `FOLLOW`) but enforces in both —
+  only the blocker may unblock, and the blocked person must never learn
+  a block exists, so a symmetric representation doesn't work. Reports
+  split into `CONTENT_REPORT` and `VENUE_REPORT`: two tables by concern
+  rather than three by target, since the two kinds differ in reason
+  vocabulary, admin resolution, and urgency, and since splitting lets
+  `VENUE_REPORT` keep a real foreign key (a venue is never deleted)
+  while `CONTENT_REPORT.target_id` deliberately can't have one (a
+  check-in can be admin-purged, a user row is destroyed by account
+  deletion, and a real FK would force cascading away the audit trail or
+  blocking the purge). Applies the same `CHECKIN_LIKE`-vs-`NOTIFICATION`
+  integrity test this schema has answered before, per case rather than
+  picking one pattern for both.
+- ADR-0011: the product layer is removed from MVP — `PRODUCT`,
+  `GLOBAL_PRODUCT_TYPE` (+ translation), and `CHECKIN_PRODUCT` are
+  dropped, and `CHECKIN` gains `rating_taste` for four venue criteria
+  in total. Four concerns were raised; the first turned out to be wrong
+  and is recorded as such (free-text item names were never the
+  aggregation key — `global_type_id` was, against a closed catalog).
+  What actually decided it was density: §8 requires 10 ratings before
+  any label shows, and at the PDD's own MVP targets a venue accumulates
+  ~2–3 check-ins a month, so an individual item would hold roughly two
+  ratings after six months. The feature would have cost every user two
+  steps on the core action and returned "New / Low Data" either way,
+  while `CHECKIN.note` already carries the same information in a form
+  people read better. Supersedes ADR-0005, carrying forward its still-live
+  half (a check-in's own fields stay editable after creation).
+- ADR-0012: migrations never import from `app/`, and reference/catalog data
+  belongs to an idempotent seeder rather than a migration. Written after
+  removing a seed module under ADR-0011 broke the entire Alembic
+  environment — one migration had imported five things from `app/`,
+  coupling frozen history to code that changes with every refactor.
+  Django documents this exact failure and its exact trigger ("will fail
+  in the future when you try to rerun old migrations… when you set up a
+  new installation"), which is what the integration suite does every
+  session. The seeder half is separately grounded: EF Core renamed its
+  migration-embedded seeding away from "data seeding" because it suits
+  only static data "for example ZIP codes," and warns that seeding must
+  not run from normal app execution because instances would race. Also
+  records a second instance already queued — Phase 6's category-catalog
+  growth had no path that wasn't a silent no-op — and closes the class
+  with a test that scans migrations for `app/` imports.
 
 ### Changed
 
@@ -351,3 +395,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   actually built (deciding which queries need a bypass, like badge
   rarity or admin tooling, is far cheaper to get right once than to
   re-audit everything already written later).
+- PDD §7, §11 and the entity-relationship diagram: added `BLOCK`,
+  `CONTENT_REPORT`, and `VENUE_REPORT` per ADR-0010. Both features were
+  already fully specified in prose and marked P0 — blocking and
+  reporting are what Apple's App Store §1.2 and Google Play's UGC policy
+  require of any app carrying user-generated content — but neither had a
+  table in the data model or the diagram, so there was nothing for the
+  backend to build against. Found while rewriting `obur-backend`'s
+  roadmap to cover the PDD in full, when the phase meant to implement
+  them turned out to have no schema to implement.
+- PDD §2, §5, §6, §7, §8, §9, §10, §12, §13, §14, §17 and the
+  entity-relationship diagram: the product layer removed per ADR-0011
+  (31 tables → 27). §8 is the section that changed most, and it got
+  *simpler*: the two-level split (a pure product-level score plus a
+  blended venue-level one) collapses to a single venue-level score, and
+  the paragraph rationalizing why a check-in rating more items carried
+  proportionally more weight is gone — every check-in now contributes
+  exactly four values and weighs the same. §10's flow drops from five
+  steps to four, with the card-stack interaction kept and repointed at
+  the four criteria. §13 loses the product page, the product hierarchy,
+  and the cross-venue "best kuşbaşılı pide" ranking, and is retitled
+  "Venue Architecture."
+- PDD §8: `rating_value` redefined from "the payoff of the overall
+  experience" to **value for money**, Turkish label *Değer* → *Fiyat*.
+  With taste, service, and ambiance each rated separately, the old
+  definition overlapped all three and measured nothing of its own; as a
+  price signal it is the only criterion that can distinguish an
+  excellent venue from an excellent venue that overcharges.
+- PDD §13: Personalized History kept, re-keyed from `GLOBAL_PRODUCT_TYPE`
+  to `VENUE.category_id` — "en iyi döner: Develi" becomes "en iyi
+  dönerci: Develi". Its stated purpose never depended on the product
+  layer, and unlike everything else derived from ratings it needs no
+  volume floor at all, since it reports the user's own rating rather
+  than a platform statistic. `VENUE_CATEGORY` now backs three readers
+  instead of one (Discover filters, §12's Layer-2 signal, this), which
+  is noted in the diagram as a consequence worth tracking.
+- PDD §6: the product layer added to the v2.0 table rather than deleted
+  outright — it is gated on density, not abandoned. At a scale where a
+  venue sees hundreds of check-ins the question becomes answerable, and
+  the notes accumulated in the meantime are what would show which items
+  are worth cataloguing.

@@ -1,7 +1,18 @@
 # ADR-0005: Check-in Fields Are Editable, Rated Products Are Not
 
 **Date:** 2026-08-18
-**Status:** Accepted
+**Status:** Superseded by [ADR-0011](0011-drop-product-layer-four-venue-criteria.md)
+
+> **2026-08-23 update:** [ADR-0011](0011-drop-product-layer-four-venue-criteria.md)
+> removed the product layer entirely, so the second half of this decision —
+> that rated products and their ratings are immutable — no longer has a
+> subject: `CHECKIN_PRODUCT` does not exist. The first half is unchanged and
+> is carried forward by ADR-0011: a check-in's own fields (`note`,
+> `photo_url`, `visited_at`, `visibility`, and all four venue-level ratings)
+> stay editable after creation, and correcting anything else still means
+> soft-deleting the check-in and creating a new one. Everything below is
+> kept as the record of why that rule was set, including the comparable
+> products it was verified against.
 
 > **2026-08-18 update:** `is_public` (referenced below as one of the
 > editable fields) was replaced by the three-tier `visibility` field in

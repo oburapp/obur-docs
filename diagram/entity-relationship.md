@@ -13,6 +13,7 @@ erDiagram
     string auth_provider_id
     string display_name
     string username
+    timestamp username_changed_at
     string email
     string bio
     string avatar_url
@@ -37,6 +38,11 @@ erDiagram
   MUTE {
     uuid user_id FK
     uuid muted_id FK
+    timestamp created_at
+  }
+  BLOCK {
+    uuid blocker_id FK
+    uuid blocked_id FK
     timestamp created_at
   }
   VENUE_CATEGORY {
@@ -76,28 +82,11 @@ erDiagram
     string visibility
     timestamp created_at
   }
-  GLOBAL_PRODUCT_TYPE {
-    uuid id PK
-    string slug
-    uuid category_id FK
-  }
-  GLOBAL_PRODUCT_TYPE_TRANSLATION {
-    uuid product_type_id FK
-    string locale
-    string name
-  }
-  PRODUCT {
-    uuid id PK
-    uuid venue_id FK
-    uuid global_type_id FK
-    string name
-    bool is_available
-    timestamp created_at
-  }
   CHECKIN {
     uuid id PK
     uuid user_id FK
     uuid venue_id FK
+    int rating_taste
     int rating_service
     int rating_ambiance
     int rating_value
@@ -114,6 +103,7 @@ erDiagram
     uuid id PK
     uuid user_id FK
     uuid venue_id FK
+    int rating_taste
     int rating_service
     int rating_ambiance
     int rating_value
@@ -122,12 +112,6 @@ erDiagram
     date visited_at
     timestamp updated_at
     timestamp created_at
-  }
-  CHECKIN_PRODUCT {
-    uuid id PK
-    uuid checkin_id FK
-    uuid product_id FK
-    int rating
   }
   CHECKIN_LIKE {
     uuid user_id FK
@@ -211,10 +195,35 @@ erDiagram
     bool is_pinned
     timestamp earned_at
   }
+  CONTENT_REPORT {
+    uuid id PK
+    uuid reporter_id FK
+    string target_type
+    uuid target_id
+    string reason
+    string status
+    uuid resolved_by FK
+    timestamp resolved_at
+    timestamp created_at
+  }
+  VENUE_REPORT {
+    uuid id PK
+    uuid reporter_id FK
+    uuid venue_id FK
+    string reason
+    string status
+    uuid resolved_by FK
+    timestamp resolved_at
+    timestamp created_at
+  }
 
   USER ||--o{ FOLLOW : "follows"
   USER ||--o{ CLOSE_FRIEND : "curates"
   USER ||--o{ MUTE : "mutes"
+  USER ||--o{ BLOCK : "blocks"
+  USER ||--o{ CONTENT_REPORT : "files"
+  USER ||--o{ VENUE_REPORT : "files"
+  VENUE ||--o{ VENUE_REPORT : "reported by"
   USER ||--o{ CHECKIN : "creates"
   USER ||--o{ CHECKIN_DRAFT : "drafts"
   VENUE ||--o{ CHECKIN_DRAFT : "may reference"
@@ -229,17 +238,11 @@ erDiagram
   USER ||--o{ LIST : "creates"
   FOLLOW ||--o| CLOSE_FRIEND : "required by"
   VENUE ||--o{ CHECKIN : "contains"
-  VENUE ||--o{ PRODUCT : "offers"
   VENUE ||--o{ VENUE_SAVE : "saved by"
   VENUE ||--o{ LIST_ITEM : "listed in"
   VENUE_CATEGORY ||--o{ VENUE : "classifies"
   VENUE_CATEGORY ||--o{ VENUE_CATEGORY : "parent of"
-  VENUE_CATEGORY ||--o{ GLOBAL_PRODUCT_TYPE : "groups"
   VENUE_CATEGORY ||--o{ VENUE_CATEGORY_TRANSLATION : "translated by"
-  GLOBAL_PRODUCT_TYPE ||--o{ PRODUCT : "defines"
-  GLOBAL_PRODUCT_TYPE ||--o{ GLOBAL_PRODUCT_TYPE_TRANSLATION : "translated by"
-  PRODUCT ||--o{ CHECKIN_PRODUCT : "rated in"
-  CHECKIN ||--o{ CHECKIN_PRODUCT : "contains"
   CHECKIN ||--o{ CHECKIN_LIKE : "receives"
   CHECKIN ||--o{ CHECKIN_BOOKMARK : "receives"
   CHECKIN ||--o{ CHECKIN_MENTION : "mentions in"
@@ -267,11 +270,11 @@ erDiagram
 
 **Venue name search uses a `pg_trgm` trigram index on `name`, not full-text search.** See [ADR-0003](../adr/0003-trigram-venue-name-search.md): trigram similarity is language-agnostic and typo-tolerant, which a language-specific `tsvector` config isn't — a requirement given venue names appear in many languages and Obur's global-expansion plans.
 
-**CHECKIN and CHECKIN_PRODUCT are separated.** A single check-in can contain multiple products (a user may eat several dishes in one visit). Each product carries its own rating. Venue-level ratings (service, ambiance, value) are stored once per check-in, required, not optional — every check-in guarantees the same three data points toward the venue's aggregate regardless of how many products were rated.
+**A check-in rates four things about the venue and nothing beneath it.** `rating_taste`, `rating_service`, `rating_ambiance`, and `rating_value` are all required. An earlier model added a per-item layer (`PRODUCT`, `GLOBAL_PRODUCT_TYPE`, `CHECKIN_PRODUCT`) so each dish carried its own rating; it was removed in [ADR-0011](../adr/0011-drop-product-layer-four-venue-criteria.md) because no individual item could reach the rating floor below at this platform's scale. `rating_taste` was added in the same change — it is now the only field measuring the food itself — and `rating_value` was redefined to mean value for money, the one price dimension, since "the payoff of the overall experience" overlapped the other three once each was rated separately.
 
-**Aggregate scores are computed at two distinct, deliberately separate levels, both using the same statistical procedure.** A product-level score (pooling only `CHECKIN_PRODUCT.rating`) stays pure food-quality-only, since it's the sort key for cross-venue product ranking (a venue's slow service shouldn't drag down its food's ranking against other venues). A venue-level headline score (pooling `CHECKIN_PRODUCT.rating` together with `rating_service`/`rating_ambiance`/`rating_value`) is the one number shown at the top of a venue's own page, where no cross-venue comparison is happening and one combined "how was visiting this place" number matches real-world precedent (Google Maps, Yelp) better than two competing scores would. Both levels compute a 95%-confidence lower bound on the mean (the same principle behind the Wilson score interval Reddit/Yelp use, chosen over a Bayesian/IMDb-style approach specifically because it stays anchored to the pool's own data instead of diluting toward an unrelated platform-wide average) rather than a raw mean, below a 10-rating floor beneath which no label is shown at all.
+**There is one aggregate score, at the venue level.** It pools all four rating fields from every `public` check-in at that venue into a single number shown at the top of the venue's page — one combined "how was visiting this place," matching real-world precedent (Google Maps, Yelp) rather than several scores competing for attention; the four criteria are shown individually beneath it. Because every check-in contributes exactly four values, every check-in weighs the same — an earlier two-level design had to accept that a check-in rating more items carried proportionally more influence, and that asymmetry disappeared with the product layer. The score computes a 95%-confidence lower bound on the mean (the same principle behind the Wilson score interval Reddit/Yelp use, chosen over a Bayesian/IMDb-style approach specifically because it stays anchored to the pool's own data instead of diluting toward an unrelated platform-wide average) rather than a raw mean, below a 10-rating floor beneath which no label is shown at all.
 
-**Historical data is never deleted.** When a venue closes, `is_active` is set to `false` — it stays visible, shown transparently as inactive, not hidden or removed. When a product is removed from a menu, `is_available` is set to `false`. Past check-ins remain visible as an archive. A check-in itself is never truly deleted either — `CHECKIN.deleted_at` marks it removed without dropping the row, so a badge or aggregate already computed from it can't be retroactively corrupted. Only a separate admin action can permanently purge one, for moderation/takedown cases.
+**Historical data is never deleted.** When a venue closes, `is_active` is set to `false` — it stays visible, shown transparently as inactive, not hidden or removed. Past check-ins remain visible as an archive. A check-in itself is never truly deleted either — `CHECKIN.deleted_at` marks it removed without dropping the row, so a badge or aggregate already computed from it can't be retroactively corrupted. Only a separate admin action can permanently purge one, for moderation/takedown cases.
 
 **A check-in's own fields are editable; its rated products are not.** See [ADR-0005](../adr/0005-checkin-fields-editable-products-immutable.md): fixing a wrong product or rating means deleting the check-in and creating a new one, not editing it in place — verified against how comparable apps (Untappd) handle this.
 
@@ -282,6 +285,10 @@ erDiagram
 **`CLOSE_FRIEND` requires an existing `FOLLOW` row and is revoked automatically when that follow is removed.** `(friend_id, user_id)` is a composite foreign key into `FOLLOW.(follower_id, following_id)` with `ON DELETE CASCADE` — a single database constraint that both enforces "must currently be a follower to be added" and guarantees a close friend can never outlive the follow relationship it was built on. Not symmetric: `A` adding `B` as a close friend has no bearing on whether `B` has done the same for `A`.
 
 **`MUTE` is deliberately not derived from `FOLLOW`, unlike `CLOSE_FRIEND`.** A user can mute anyone, followed or not — muting a stranger keeps their content out of Layer 2's algorithmic fill (§12) too, not just Layer 1. It's the lighter counterpart to blocking: one-directional, silent, and scoped to feed display only — the follow relationship, visibility, discoverability, likes, bookmarks, and notifications are all untouched. Where blocking is interpersonal-safety tooling, mute is a feed preference.
+
+**`BLOCK` records direction even though it acts in both.** Same shape as `FOLLOW` — a composite key over two user references with a self-reference `CHECK` — and every visibility query asks whether a row exists in either direction, backed by an index on `blocked_id` for the reverse lookup. A symmetric representation would have been simpler and was rejected: only the blocker may unblock, and the blocked person must never learn a block exists, and both of those need to know which way it runs. Cascades on both sides when either account is deleted — unlike a report, a block has no archival value once one party is gone. See [ADR-0010](../adr/0010-blocking-and-reporting-schema.md).
+
+**Reports are two tables split by concern, not three split by target.** `CONTENT_REPORT` covers check-ins and profiles; `VENUE_REPORT` covers venues. They are separated because their reason vocabularies, admin resolutions, and urgency all differ — a harassment report is time-sensitive harm, a wrong address is not — and because splitting lets each hold the strongest integrity it honestly can. `VENUE_REPORT.venue_id` is a real foreign key, since a `VENUE` row is never deleted (`is_active` / `is_suspended` instead). `CONTENT_REPORT.target_id` deliberately is not, for the same reason `NOTIFICATION.target_id` isn't: a check-in can be permanently purged by an admin and a `USER` row is destroyed outright by account deletion, so a real foreign key would force a choice between cascading away the record of why content was removed and blocking the purge itself. Both tables keep `reporter_id` with `ON DELETE SET NULL` — a report is a moderation record that outlives its reporter's account, the same treatment `VENUE.added_by` already has. See [ADR-0010](../adr/0010-blocking-and-reporting-schema.md).
 
 **Likes are a visible signal; bookmarks are always private — kept as separate tables, not a shared table with a mode flag.** `CHECKIN_LIKE`/`LIST_LIKE` are public counts anyone can see (subject to the target's own visibility); `CHECKIN_BOOKMARK`/`LIST_BOOKMARK` are personal save-for-later notes nobody but the bookmarker can ever see — there is deliberately no "how many bookmarked this" count anywhere. See [ADR-0006](../adr/0006-three-tier-visibility-and-close-friends.md). Liking or bookmarking something is only possible if the actor can already see it.
 
@@ -299,12 +306,14 @@ erDiagram
 
 **`USER.status` (`active | frozen | suspended`) is standing, kept separate from `role`, which is permission.** `frozen` is self-service and reversible — a user freezes their own account and reactivates it just by logging back in. `suspended` is admin-only, set only by resolving a report (see the blocking/reporting decision above), and never user-reversible. Neither value is reachable by the other actor — a user can't suspend anyone, an admin doesn't need to freeze accounts.
 
-**Account deletion is permanent, not a `status` value or a soft-delete — the one deliberate exception to "historical data is never deleted."** It purges every check-in (and its `CHECKIN_PRODUCT`/`CHECKIN_LIKE`/`CHECKIN_BOOKMARK` rows), every list and `LIST_ITEM`, and every `VENUE_SAVE` belonging to the account — reusing the same permanent-purge mechanism an admin takedown already needed for individual check-ins, just user-triggered instead. A venue the account added is not personal content, so it isn't deleted with it: `VENUE.added_by` is set to `NULL` (`ON DELETE SET NULL`) rather than left dangling or cascaded. Chosen over a softer "anonymize but keep the content" approach — the model blocking uses for display only — because once a user asks to be forgotten, the data itself should be gone, not just its attribution.
+**Account deletion is permanent, not a `status` value or a soft-delete — the one deliberate exception to "historical data is never deleted."** It purges every check-in (and its `CHECKIN_LIKE`/`CHECKIN_BOOKMARK`/`CHECKIN_MENTION` rows), every list and `LIST_ITEM`, and every `VENUE_SAVE` belonging to the account — reusing the same permanent-purge mechanism an admin takedown already needed for individual check-ins, just user-triggered instead. A venue the account added is not personal content, so it isn't deleted with it: `VENUE.added_by` is set to `NULL` (`ON DELETE SET NULL`) rather than left dangling or cascaded. Chosen over a softer "anonymize but keep the content" approach — the model blocking uses for display only — because once a user asks to be forgotten, the data itself should be gone, not just its attribution.
 
 **`visited_at` and `created_at` are separate fields.** A user may log a visit days after it occurred. Badge calculations use `visited_at`. The `visited_tz` field stores the IANA timezone at the time of visit for correct local-time calculations.
 
-**Global-ready by design.** All timestamps stored in UTC. User-facing labels (`VENUE_CATEGORY`, `GLOBAL_PRODUCT_TYPE`, `BADGE`) live in separate translation tables keyed by BCP 47 locale. Adding a new language requires only new translation rows. `slug` fields provide language-independent references in code. `country_code` follows ISO 3166-1 alpha-2, `locale` follows BCP 47, `timezone` follows IANA tz database.
+**Global-ready by design.** All timestamps stored in UTC. User-facing labels (`VENUE_CATEGORY`, `BADGE`) live in separate translation tables keyed by BCP 47 locale. Adding a new language requires only new translation rows. `slug` fields provide language-independent references in code. `country_code` follows ISO 3166-1 alpha-2, `locale` follows BCP 47, `timezone` follows IANA tz database.
 
 **Auth identity is provider-agnostic by field name.** `USER.auth_provider` ("clerk" today) and `auth_provider_id` (that provider's user ID) are deliberately not named after Clerk specifically. Application code outside the auth module never sees provider-specific types — only this pair of columns. Switching or adding an auth provider later needs new rows, not a rename migration. `UNIQUE (auth_provider, auth_provider_id)`.
 
-**Translation tables over embedded strings.** `VENUE_CATEGORY`, `GLOBAL_PRODUCT_TYPE`, and `BADGE` store only a `slug` and metadata. All display names live in `*_TRANSLATION` tables. This avoids duplication and allows the same category system to serve multiple languages without schema changes.
+**Translation tables over embedded strings.** `VENUE_CATEGORY` and `BADGE` store only a `slug` and metadata. All display names live in `*_TRANSLATION` tables. This avoids duplication and allows the same category system to serve multiple languages without schema changes.
+
+**`VENUE.category_id` is the platform's only classification dimension.** With the product layer gone it backs three separate readers — Discover's filters, the feed's Layer-2 taste-overlap signal, and a user's own "best per category" history — so its granularity sets a ceiling on how specific all three can be. Unlike the item catalog it replaced, it stays tractable: venue types are a bounded set, a venue is created rarely rather than chosen on every check-in, the parent category is always a valid fallback so nothing blocks, and a wrong category is admin-correctable through the same venue report path as any other field.
