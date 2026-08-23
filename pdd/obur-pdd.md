@@ -3,7 +3,6 @@
 **Version:** 1.0  
 **Date:** August 2026  
 **Status:** Active  
-**Owners:** Mehmet Eren Reyhanlıoğlu + [Friend]
 
 ---
 
@@ -25,7 +24,8 @@
 14. [Tech Stack](#14-tech-stack)
 15. [Infrastructure and Cost](#15-infrastructure-and-cost)
 16. [Go-to-Market Strategy](#16-go-to-market-strategy)
-17. [Open Decisions](#17-open-decisions)
+17. [Non-Functional Requirements](#17-non-functional-requirements)
+18. [Open Decisions](#18-open-decisions)
 
 
 ---
@@ -121,6 +121,22 @@ A "followers-only" tier was considered and rejected: Obur's follow model is one-
 
 Business hours are operational data with no bearing on the discovery experience Obur provides. Stale hours that must be kept up to date send users to a closed venue and cost the platform trust. Verification is left to Google Maps.
 
+### Venue Verification Is Cosmetic, Not a Quality Gate
+
+A verified checkmark on a venue means exactly one thing — "this location definitely exists here" — never a judgment about how good it is, and it never affects search ranking or discoverability. Two independent, zero-human-labor-in-the-common-case signals confirm it: a Google Places match corroborated by real check-in activity, or, for venues Google hasn't indexed, enough independent check-ins to warrant a quick admin look. A fully manual, admin-reviews-everything model was rejected outright — it doesn't scale for a two-person team. See [ADR-0009](https://github.com/oburapp/obur-docs/blob/main/adr/0009-venue-discovery-enrichment.md).
+
+### Venue Editing Is Report-Only, Never Direct
+
+No user can edit a venue's fields directly, not even whoever added it. Every correction — wrong address, wrong name, permanently closed, duplicate — goes through the same reporting mechanism as check-ins and profiles (§11), reviewed by an admin before anything changes. Direct community editing was considered and rejected on a real precedent: an unrelated app that let users directly edit street-animal location pins had that feature abused to relocate or delete other people's pins maliciously. A venue that has genuinely closed isn't hidden or deleted — `is_active` is set to `false` and it stays visible, shown transparently and grayed out, the same "historical data is never deleted" principle already applied elsewhere (§7). Suspension is a separate, harsher concern: `is_suspended`, set only by an admin acting on a report, hides a venue completely — its own page returns a generic "not found" rather than an explanation, the same "hidden must be indistinguishable from nonexistent" principle already applied to blocking below. See §13.
+
+### Badges Are Permanent, Not Live Status
+
+A badge, once earned, is never automatically revoked — even if the condition that earned it later becomes false (deleting a check-in that had crossed a threshold, for instance). It's worded and treated as a record of something that happened, not a claim about the present, the same way a Steam achievement stays unlocked forever regardless of later account activity. This was a deliberate choice over dynamic re-evaluation, which the Philosophy's "proof of status" framing might otherwise suggest: permanence matches real user expectation (an earned trophy shouldn't quietly disappear) and removes an entire class of architecture (no re-scan job needed, only forward evaluation at the moment a new action might cross a threshold). Admin moderation is the one exception — a badge resting on fraudulent activity can be revoked by hand, the same override admins retain everywhere else in this document. See §9.
+
+### Blocking Is Harsher Than Any Privacy Setting, On Purpose
+
+A privacy tier (§11) is about who a user chooses to share with going forward. Blocking is about safety — removing a specific person from the relationship entirely, retroactively as well as going forward. It closes visibility completely (including `public`), purges past likes/bookmarks/notifications between the two people in both directions, and is silent — the blocked person is never told, and a blocked account behaves exactly like a nonexistent one to them. Considered against a lighter option (just hide future content, leave the historical record alone) and rejected: for interpersonal-safety tooling specifically, leaving old traces behind undermines the point of the feature.
+
 ---
 
 ## 5. Information Architecture and Navigation
@@ -140,7 +156,8 @@ App
 ├── Feed
 │   └── Search (returns check-ins)
 ├── Discover
-│   ├── Search (returns venue / product / user / list)
+│   ├── Search (returns venue / product / user / list / hashtag)
+│   ├── Hashtag page (§12) — every public check-in/list carrying it
 │   └── Map view (opened from list or discover)
 ├── + Modal
 │   ├── Check-in creation flow (5 steps)
@@ -151,14 +168,30 @@ App
 │   ├── Favorites tab
 │   ├── Lists tab
 │   ├── Achievements tab
-│   └── Map tab (venues visited)
+│   ├── Map tab (venues visited)
+│   └── Settings (gear icon)
+│       ├── Account
+│       │   ├── Edit profile (display_name, username, avatar, bio — §7)
+│       │   └── Account (email/password via Clerk; freeze; delete — §6, §7)
+│       ├── Privacy & Safety
+│       │   ├── Close friends (curate list — §11)
+│       │   ├── Blocked users (§11)
+│       │   └── Muted users (§11)
+│       ├── Notifications (per-trigger preferences — §11)
+│       ├── Appearance
+│       │   ├── Dark mode
+│       │   └── Language (`locale` — §7)
+│       ├── Activity (recent likes, across check-ins and lists)
+│       └── About / Help
+│           ├── Content Policy, Terms, Privacy Policy (§11, §18)
+│           └── Support / abuse contact — App Store §1.2 baseline (§11)
 ├── Venue page
 │   ├── Products tab
 │   ├── Check-ins tab
 │   └── Photos tab
 └── Product page
     ├── Check-ins at this venue
-    └── Where else has this product been liked?
+    └── Other venues, ranked (§13) — "where's the best kuşbaşılı pide?"
 ```
 
 ### Search Behavior
@@ -166,7 +199,9 @@ App
 The same search box returns different results depending on the current page:
 
 - **Search on Feed:** searches among check-ins from followed users
-- **Search on Discover:** returns venues, products, users, and lists; can be narrowed with filter chips
+- **Search on Discover:** returns venues, products, users, lists, and hashtags (typing `#` scopes directly to hashtags); can be narrowed with filter chips
+
+Tapping an `@mention` anywhere navigates straight to that person's profile; tapping a `#hashtag` anywhere navigates to its hashtag page (§12).
 
 ---
 
@@ -177,7 +212,12 @@ The same search box returns different results depending on the current page:
 | Feature | Description | Priority |
 |---------|----------|---------|
 | Sign up / Sign in | Email + social login (Clerk) | P0 |
+| Edit profile | `display_name` freely editable; `username` unique, rate-limited changes (§7) | P0 |
+| Delete account | Permanent — purges all personal content (check-ins, lists, saves); required for store compliance (Apple §5.1.1(v), Google Play's equivalent account-deletion requirement) (§7) | P0 |
+| Freeze account | Self-service, reversible — logging back in reactivates; distinct from admin suspension (§7, §11) | P1 |
 | Follow users | One-directional, no approval | P0 |
+| Block users | Absolute, silent, bidirectional — closes visibility entirely and purges past likes/bookmarks/notifications between the two people (§11) | P0 |
+| Report content / accounts / venues | Check-in, profile, or venue — human-reviewed queue, no auto-hide threshold; a venue report is the only way its details ever change after creation, no direct user-editing (§11, §13) — App Store §1.2 baseline | P0 |
 | Create check-in | 5-step flow | P0 |
 | Feed | Chronological check-ins and lists from followed users | P0 |
 | Discover | Venue / product / user search, city filter | P0 |
@@ -188,12 +228,24 @@ The same search box returns different results depending on the current page:
 | List creation | User curation, map display, freely reorderable | P1 |
 | Save venue | Been / want to go / favorite; private by default, owner may share | P1 |
 | Close friends | Manually curated subset of followers, grants access to "close friends"-visibility content | P1 |
+| Mute users | One-directional, silent, feed-only — the relationship, visibility, and discoverability are all untouched, unlike blocking (§11) | P1 |
 | Like | Check-ins and lists; a visible social signal | P1 |
 | Bookmark | Private save-for-later on a check-in or list; never a social signal, never shown to anyone else | P1 |
 | Map view | Profile- and list-based | P1 |
-| Notifications | Like, follow, badge, venue verification | P1 |
+| Notifications | Like, follow, badge — deliberately *not* venue verification, see below | P1 |
 | Visibility control | Public / close friends / private, per check-in, list, or saved venue | P1 |
 | Travel mode | Manual city selector | P1 |
+| Venue verification | Cosmetic "this location definitely exists" signal — Google match + check-ins, or check-ins + admin review; never affects ranking, no notification (§13) | P1 |
+| Support / abuse contact page | Published contact info, in-app and in the store listing — App Store §1.2 baseline, non-negotiable (§11) | P0 |
+| Content Policy / Terms / Privacy Policy pages | Hosts the legal text itself, which needs review before publishing (§11, §18) — the page existing is P0 even though the final text is pending | P0 |
+| Notification preferences | Per-trigger opt-out (follow, like, badge — §11) | P1 |
+| Dark mode | App-wide theme toggle | P1 |
+| Language switching | Manual override of `locale` (§7); TR/EN both MVP | P1 |
+| Recent likes view | A user's own like history, across check-ins and lists | P1 |
+| @ Mentions | Mutual-followers only, notifies but never overrides visibility (§11) | P1 |
+| # Hashtags | Free text, up to 5 per check-in/list, own discovery page, public-only (§11, §12) | P1 |
+| Personalized history | Profile shows the user's own highest-rated instance per product type ("en iyi döner: X") | P1 |
+| Share cards | Branded, shareable image cards for a check-in/list/venue, with low-friction one-tap sharing to Instagram/WhatsApp/etc. — mostly client-side, deferred until client work starts | P1 |
 
 ### v2.0 (Next Release)
 
@@ -201,7 +253,6 @@ The same search box returns different results depending on the current page:
 |---------|-------------|
 | "You Might Like" shelf | Venue suggestions based on taste overlap; not enabled until enough data has accumulated |
 | Profile suggestions | User suggestions based on shared taste and followers |
-| User-driven venue verification | Venue deactivated once multiple reports come in |
 | Expansion to a second city | Same "enthusiast first, then organic growth" playbook |
 
 ---
@@ -216,7 +267,11 @@ USER
   auth_provider     VARCHAR                  -- "clerk" today; not hardcoded elsewhere
   auth_provider_id  VARCHAR                  -- that provider's user ID
                                               -- UNIQUE (auth_provider, auth_provider_id)
-  username      VARCHAR
+  display_name  VARCHAR                  -- shown everywhere; freely editable, no
+                                          -- uniqueness constraint
+  username      VARCHAR UNIQUE           -- the handle; edits rate-limited (see §6) —
+                                          -- unlike display_name, this is what search,
+                                          -- mentions, and profile URLs key off of
   email         VARCHAR UNIQUE
   bio           TEXT
   avatar_url    VARCHAR
@@ -226,6 +281,12 @@ USER
   timezone      VARCHAR                  -- IANA: "Europe/Istanbul", "America/New_York"
   role          VARCHAR DEFAULT 'user'   -- user | admin — never settable via any
                                           -- user-facing endpoint or the Clerk webhook
+  status        VARCHAR DEFAULT 'active' -- active | frozen | suspended — standing, not
+                                          -- permission; kept separate from role.
+                                          -- frozen: self-service, reversible by the
+                                          -- user just logging back in. suspended:
+                                          -- admin-only, via a report (§11) — never
+                                          -- user-reversible.
   created_at    TIMESTAMPTZ
 
 FOLLOW
@@ -245,6 +306,16 @@ CLOSE_FRIEND
                                           -- row is auto-removed the moment that
                                           -- follow is undone — see ADR-0006
 
+MUTE
+  user_id       UUID FK → USER          -- the muting user
+  muted_id      UUID FK → USER
+  created_at    TIMESTAMPTZ
+  PRIMARY KEY (user_id, muted_id)
+                                          -- CHECK (user_id != muted_id)
+                                          -- not derived from FOLLOW — a user can be
+                                          -- muted whether or not they're followed,
+                                          -- see §11
+
 VENUE_CATEGORY
   id            UUID PK
   slug          VARCHAR UNIQUE           -- language-independent reference: "food", "cafe", "bar"
@@ -262,13 +333,24 @@ VENUE
   lat           FLOAT
   lng           FLOAT
   address_note  TEXT                     -- free text: "3rd floor of the mall"
-  google_places_id VARCHAR               -- optional reference
-  added_by      UUID FK → USER
+  google_places_id VARCHAR               -- UNIQUE where not null — see ADR-0009
+  added_by      UUID FK → USER ON DELETE SET NULL  -- the venue outlives its adder;
+                                          -- a deleted account leaves this null, not
+                                          -- a dangling reference — see §7 Key Design
+                                          -- Decisions, account deletion
   category_id   UUID FK → VENUE_CATEGORY
   city          VARCHAR                  -- "Istanbul", "New York", "Berlin"
+  district      VARCHAR                  -- "Kadıköy", "Beşiktaş" — sub-city scope for
+                                          -- discovery/badges/rankings; required for every
+                                          -- venue from ADR-0009 forward, nullable only for
+                                          -- venues that predate it
   country_code  CHAR(2)                  -- ISO 3166-1 alpha-2: "TR", "US", "DE"
   timezone      VARCHAR                  -- IANA: "Europe/Istanbul" — for city-based filtering
-  status        VARCHAR                  -- active | closed | unconfirmed
+  is_active     BOOLEAN DEFAULT TRUE     -- false = business has closed; stays visible,
+                                          -- shown transparently as inactive — see §13
+  is_verified   BOOLEAN DEFAULT FALSE    -- cosmetic only, never affects ranking — see ADR-0009
+  is_suspended  BOOLEAN DEFAULT FALSE    -- admin moderation action; true = fully hidden,
+                                          -- venue page returns "not found" — see §13
   created_at    TIMESTAMPTZ
 
 VENUE_SAVE
@@ -303,11 +385,13 @@ CHECKIN
   id            UUID PK
   user_id       UUID FK → USER
   venue_id      UUID FK → VENUE
-  rating_service  SMALLINT              -- 1-4, nullable
-  rating_ambiance SMALLINT              -- 1-4, nullable
-  rating_value    SMALLINT              -- 1-4, nullable ("worth it?")
+  rating_service  SMALLINT NOT NULL     -- 1-4, required
+  rating_ambiance SMALLINT NOT NULL     -- 1-4, required
+  rating_value    SMALLINT NOT NULL     -- 1-4, required ("worth it?")
   note          TEXT
-  photo_url     VARCHAR
+  photo_url     VARCHAR                 -- served as a short-lived signed URL when
+                                          -- visibility != public; a permanent link
+                                          -- otherwise — see §17
   visibility    VARCHAR DEFAULT 'public' -- public | close_friends | private — see ADR-0006
   visited_at    DATE                    -- visit date entered by the user; may not
                                           -- be in the future, checked against the
@@ -316,7 +400,37 @@ CHECKIN
   deleted_at    TIMESTAMPTZ             -- NULL unless soft-deleted; a check-in already
                                           -- factored into a badge or aggregate must
                                           -- never be truly deleted (see ADR-0005)
+  idempotency_key VARCHAR               -- client-generated; UNIQUE (user_id,
+                                          -- idempotency_key) — a retried submission
+                                          -- with the same key returns this row
+                                          -- instead of creating a duplicate — see §17
   created_at    TIMESTAMPTZ             -- log timestamp (UTC)
+
+CHECKIN_DRAFT
+  id            UUID PK
+  user_id       UUID FK → USER
+  venue_id      UUID FK → VENUE          -- nullable — venue may not be chosen yet
+  rating_service  SMALLINT               -- nullable — a draft is incomplete by
+                                          -- definition, unlike CHECKIN's own
+                                          -- required version of this field
+  rating_ambiance SMALLINT               -- nullable, same reason
+  rating_value    SMALLINT               -- nullable, same reason
+  note          TEXT
+  photo_url     VARCHAR
+  visited_at    DATE
+  updated_at    TIMESTAMPTZ             -- last autosave, drives cross-device sync
+  created_at    TIMESTAMPTZ
+                                          -- deliberately not a CHECKIN.is_draft flag —
+                                          -- a separate table makes it structurally
+                                          -- impossible for a draft to leak into
+                                          -- aggregate/badge/feed queries; see §17.
+                                          -- Promoted to a real CHECKIN row (and
+                                          -- deleted) on final submit; product-level
+                                          -- ratings within a draft are represented
+                                          -- more loosely than CHECKIN_PRODUCT's
+                                          -- referential-integrity model, since a
+                                          -- draft carries no such guarantee — exact
+                                          -- shape left as an implementation detail
 
 CHECKIN_PRODUCT
   id            UUID PK
@@ -336,6 +450,32 @@ CHECKIN_BOOKMARK
   checkin_id    UUID FK → CHECKIN
   created_at    TIMESTAMPTZ
   PRIMARY KEY (user_id, checkin_id)      -- private; no count exposed anywhere
+
+CHECKIN_MENTION
+  id            UUID PK
+  checkin_id    UUID FK → CHECKIN
+  mentioned_user_id UUID FK → USER       -- UNIQUE (checkin_id, mentioned_user_id)
+  created_at    TIMESTAMPTZ
+                                          -- only creatable between mutual followers
+                                          -- (author follows mentioned_user_id AND
+                                          -- vice versa) — see §11. A structured
+                                          -- table, not text parsed at render time,
+                                          -- so mention creation, the notification
+                                          -- it triggers, and its retroactive purge
+                                          -- on blocking (§11) can all be enforced
+                                          -- the same way CHECKIN_LIKE's are
+
+HASHTAG
+  id            UUID PK
+  tag           VARCHAR UNIQUE            -- normalized form — see §7 Key Design
+                                          -- Decisions, Turkish-aware normalization
+  created_at    TIMESTAMPTZ
+
+CHECKIN_HASHTAG
+  checkin_id    UUID FK → CHECKIN
+  hashtag_id    UUID FK → HASHTAG
+  PRIMARY KEY (checkin_id, hashtag_id)   -- max 5 per check-in, enforced at the
+                                          -- application layer — see §12
 
 LIST
   id            UUID PK
@@ -364,10 +504,15 @@ LIST_BOOKMARK
   created_at    TIMESTAMPTZ
   PRIMARY KEY (user_id, list_id)         -- private; no count exposed anywhere
 
+LIST_HASHTAG
+  list_id       UUID FK → LIST
+  hashtag_id    UUID FK → HASHTAG
+  PRIMARY KEY (list_id, hashtag_id)      -- max 5 per list, same rule as CHECKIN_HASHTAG
+
 NOTIFICATION
   id            UUID PK
   user_id       UUID FK → USER           -- recipient
-  type          VARCHAR                  -- new_follower | checkin_like | list_like
+  type          VARCHAR                  -- new_follower | checkin_like | list_like | mention
   actor_id      UUID FK → USER, nullable -- who did it
   target_type   VARCHAR                  -- checkin | list | user
   target_id     UUID                     -- not a real FK — see ADR-0008
@@ -401,7 +546,13 @@ USER_BADGE
 
 **CHECKIN and CHECKIN_PRODUCT are separate.** A single check-in can contain multiple products; each product carries its own rating. Venue-level criteria (service, ambiance, worth it) are entered once per check-in.
 
-**Historical data is never deleted.** If a venue closes, `status` becomes `closed` and its check-ins remain as an archive. If a product is removed from the menu, `is_available` becomes `false` — it's no longer suggested for new check-ins but still appears in past records.
+**Historical data is never deleted.** If a venue closes, `is_active` becomes `false` — it stays fully visible, shown transparently as inactive, and its check-ins remain as an archive. This is a different state from `is_suspended`, an admin moderation action that hides a venue entirely (see §13); neither is user-settable, both change only through a report an admin acts on. If a product is removed from the menu, `is_available` becomes `false` — it's no longer suggested for new check-ins but still appears in past records.
+
+**Account deletion is the one deliberate exception to "historical data is never deleted," and it's permanent, not soft.** Unlike a single check-in (`CHECKIN.deleted_at`, recoverable in principle, only an admin can truly purge one), deleting an account purges everything personal to it outright: every check-in and its `CHECKIN_PRODUCT`/`CHECKIN_LIKE`/`CHECKIN_BOOKMARK`/`CHECKIN_MENTION` rows, every list and `LIST_ITEM`, every `VENUE_SAVE` — the same permanent-purge mechanism an admin takedown already uses, just user-triggered instead of admin-triggered. Aggregate ratings and badges derived from that content simply recompute without it; nothing needs to leave a placeholder behind. The one exception within the exception: a `VENUE` the account added is not personal content — it's a shared resource other users rely on — so it survives with `added_by` set to `NULL` rather than being deleted or orphaned. Chosen deliberately over a softer "anonymize but keep the content" approach (the model blocking uses for display, §11): once a user asks to be forgotten, the data itself is gone, not just its attribution.
+
+**`HASHTAG.tag` is normalized with Turkish-aware casing, not a naive lowercase.** Turkish's dotted/dotless İ-I distinction (`İstanbul`.lower() and `Istanbul`.lower() diverge under a locale-naive transform) means `#AnadoluMutfağı` and `#anadolumutfağı` could silently end up as two different rows instead of one if normalization doesn't account for it — the same class of subtle text-processing bug `LIST_ITEM.position`'s `COLLATE "C"` requirement already caught elsewhere in this schema (ADR-0007). Locale-aware casing (or a Turkish-specific case-folding table) is required at write time, not left to whatever the database's default collation happens to do.
+
+**A mention notifies but never overrides visibility.** `CHECKIN_MENTION` can only be created between mutual followers (§11) — a real, established relationship, not an open door to tag anyone. Even so, being mentioned in a `private` or `close_friends` check-in doesn't grant the mentioned person access to see it; they get a notification, not a visibility exception. Extending access this way would be a backdoor around the same visibility system this document has otherwise kept airtight (existence-leak, signed photo URLs, §17) — a mention is a pointer, not a permission grant.
 
 **`visited_at` and `created_at` are kept separate.** A user may log last week's meal today. Badge calculations are based on `visited_at`.
 
@@ -434,7 +585,7 @@ Four options, no neutral option:
 
 An even number of options with no neutral choice pushes the user to pick a real side. This structurally reduces the rating inflation seen in star systems (everyone giving 4-5).
 
-### Venue Criteria (CHECKIN fields, optional)
+### Venue Criteria (CHECKIN fields, required)
 
 | Field | Description |
 |------|------|
@@ -442,23 +593,37 @@ An even number of options with no neutral choice pushes the user to pick a real 
 | rating_ambiance | Ambiance (including music, lighting, decor) |
 | rating_value | "Worth it?" — not price/performance, but the payoff of the overall experience |
 
-### Aggregate Label (Shown on Venue and Product Pages)
+Required on every check-in, not optional (see §10 Step 3) — every check-in guarantees exactly these three additional data points toward the venue's own aggregate below, regardless of how many products were selected in Step 2.
 
-Deliberately uses different vocabulary from user input. The label is determined by a ratio (%) and volume (check-in count) threshold:
+### Aggregate Scores
 
-| Label | Required Ratio | Min. Check-ins |
-|--------|-------------|---------------|
-| Excellent | ≥ 90% "very good" | 20+ |
-| Nearly excellent | ≥ 80% "very good" | 8+ |
-| Very good | ≥ 60% "very good" | 3+ |
-| Good | ≥ 50% very good + good | 3+ |
-| Above average | ~40-50% positive | 3+ |
-| Average | Scattered / mixed | 3+ |
-| Below average | ≥ 40% "bad" | 3+ |
-| Bad | ≥ 60% "bad" | 3+ |
-| *(New / low data)* | — | < 3 |
+Deliberately uses different vocabulary from user input — an earlier version of this table didn't actually honor that (four of its eight labels were the exact same words as the input scale). This version is a fully deterministic statistical procedure, not a table to eyeball, and it's applied at **two distinct levels** that must stay separate:
 
-Thresholds are a starting point; they should be calibrated once initial user data comes in.
+**Product-level score — stays pure, never blended with anything else.** Pool: every `CHECKIN_PRODUCT.rating` for one specific product (on that product's own page), or for every product at one venue (in that venue's product listing). This is the number §13's cross-venue "best kuşbaşılı pide" ranking sorts by — mixing in a venue's own service/ambiance would let a slow-service venue's excellent food rank lower for reasons that have nothing to do with the food itself, so this pool is food-quality only, always.
+
+**Venue-level headline score — the one big number at the top of a venue's own page, combining everything.** Pool: every `CHECKIN_PRODUCT.rating` *and* every `rating_service`/`rating_ambiance`/`rating_value` value recorded at that venue, all pooled together. Unlike the product-level score, blending is intentional here: there's no cross-venue comparison happening on a venue's own page, so "how was visiting this place, food and experience together" is a more useful single number than two separate scores competing for attention — matching how virtually every comparable app (Google Maps, Yelp) shows one overall score, not two. This is a deliberate simplification: it treats food quality and the three experience criteria as equally-weighted, interchangeable signals of "overall experience," a product judgment, not a statistical necessity. It also means a check-in that rated more products contributes proportionally more data points than one that rated fewer (each check-in already guarantees the same 3 experience values, but product count still varies) — accepted deliberately: someone who tried and rated more of the menu has shared more signal, and it's fine for that to carry more weight.
+
+**Both levels use the same statistical procedure:**
+
+1. **Volume floor.** Fewer than 10 ratings in the pool: label is *New / Low Data* (Turkish: *Yeni / Az Veri*) — the same "don't claim a tier until there's really enough evidence" standard [Steam](https://www.steampageanalyzer.com/blog/steam-review-score-thresholds) itself uses (10 reviews minimum before any label shows). Tested empirically against a smaller floor: at 3 ratings, a venue with e.g. two "Very Good" and one "Bad" (a genuinely decent showing) could compute to the single worst possible label — the interval is just too wide that early to say anything reliable. At 10, the same kind of mixed-but-mostly-positive sample lands in a sensible middle-positive band instead.
+2. **Compute a 95% confidence lower bound on the mean**, not the raw mean itself: with sample mean x̄, sample standard deviation s, and n ratings, `Lower Bound = x̄ − t(0.95, n−1) × (s / √n)`, clipped to [1.0, 4.0]. This is the same principle behind the Wilson score interval Reddit and Yelp use for exactly this "don't let a handful of votes overclaim" problem — anchored to the pool's own data (not diluted toward some unrelated global average, which is why this was chosen over a Bayesian/IMDb-style approach), and it naturally pulls the result down both when there's too little data *and* when raters genuinely disagree (a high-variance pool lands closer to *Mixed* even at healthy volume) — which is also what replaces the earlier, uncomputable "scattered / mixed" row with a real formula.
+3. **Place that lower-bound number in the band below** — a single pass, no separate per-tier volume gates or downgrade steps needed, since the confidence math already accounts for sample size on its own:
+
+| English | Türkçe | Lower-Bound Range |
+|---------|--------|--------------------|
+| Extremely Favorable | Çok Olumlu | (3.7 – 4.0] |
+| Very Favorable | Olumlu | (3.4 – 3.7] |
+| Fairly Favorable | Genelde Olumlu | (3.1 – 3.4] |
+| Somewhat Favorable | Kısmen Olumlu | (2.8 – 3.1] |
+| Mixed | Karışık | [2.2 – 2.8] |
+| Somewhat Unfavorable | Kısmen Olumsuz | [1.9 – 2.2) |
+| Fairly Unfavorable | Genelde Olumsuz | [1.6 – 1.9) |
+| Very Unfavorable | Olumsuz | [1.3 – 1.6) |
+| Extremely Unfavorable | Çok Olumsuz | [1.0 – 1.3) |
+
+Only the label is ever shown to users — never the raw score or the underlying math — consistent with the "different vocabulary from input" rule above. A venue or product's own page also shows the rating count behind its label (e.g. "47 check-in'e dayanıyor") for transparency about how much evidence backs the claim. In a venue's own product listing, each item gets a light, compact indicator (not the full text label repeated down a long menu) using its own product-level score — the full text label is reserved for the one venue-level headline and each product's own dedicated page.
+
+The exact cut points and the volume floor are a starting point — calibrated once real usage data comes in (§18). What's fixed now is the *procedure and its statistical grounding*, not the final numbers.
 
 ---
 
@@ -480,19 +645,27 @@ Badges are not a game reward — they are proof of status. Stronger than the cou
 
 | Badge | Tier | Earning Condition |
 |-------|-------|----------------|
-| First discoverer | Gold | Platform's first check-in at a venue or its products |
+| First discoverer | Gold | Platform's first check-in at a venue |
 | Döner expert | Gold | Döner logged at 20+ different venues |
 | Kadıköy explorer | Silver | 30+ different venues in Kadıköy |
 | Loyal customer | Silver | 10+ visits to the same venue |
 | First step | Bronze | First check-in |
 | Social | Bronze | First 5 followers |
 
+### Permanence and Evaluation
+
+**A badge is permanent once earned — it documents a historical fact, not a live status.** "Reached 30+ venues in Kadıköy" stays true forever, even if the user later deletes a check-in that would drop them back below the threshold — the same way a Steam achievement is never revoked even if its underlying condition later becomes false. This resolves what would otherwise be a real tension between the Philosophy above ("proof of status") and user expectations (nobody wants an earned trophy quietly taken away): a badge is worded and treated as something that *happened*, not something that's *currently true*. The one exception is admin moderation — if a badge turns out to rest on fraudulent activity (e.g. "first discoverer" on a venue later found to be fake and suspended, §13), an admin can revoke it manually, the same override the admin always retains elsewhere in this document. There's no automatic revocation path.
+
+Permanence simplifies evaluation considerably: a badge only ever needs checking **forward**, at the moment a new check-in (or other qualifying action) might newly cross a threshold — the same one-extra-query pattern venue verification already uses (§13, ADR-0009). There's no need to ever re-scan or "un-award," so this stays synchronous, consistent with the rest of the stack (ADR-0008's notifications, ADR-0009's verification) and needs no new queue or background-worker infrastructure.
+
+`rarity_pct` is the one exception that does need periodic, not live, computation: it's a percentage over the *entire* user base, and recomputing that on every profile view doesn't scale the way a per-check-in threshold check does. Real precedent for exactly this pattern: Steam's "global achievement percentage" and League of Legends' rank-distribution percentile are both known to update on a periodic/batch cycle, not in real time. This is the one place in the system that genuinely needs a scheduled job rather than synchronous evaluation — the exact cadence (daily, weekly, or usage-triggered) doesn't change this architecture and is left as an implementation decision, not fixed here.
+
 ### Display Rules
 
 - Users can pin the badges they want on their profile (`is_pinned = true`)
 - The "All achievements" section shows every badge earned
 - Each badge displays its rarity next to it: "held by 1.2% of users"
-- The `rarity_pct` field is periodically recalculated on the backend
+- The `rarity_pct` field is recalculated periodically, not live — see Permanence and Evaluation above
 
 ---
 
@@ -500,11 +673,22 @@ Badges are not a game reward — they are proof of status. Stronger than the cou
 
 ### Steps
 
+Throughout Steps 1–4, progress is autosaved as a `CHECKIN_DRAFT` (§17) — the flow can be closed and resumed later, including on a different device, without losing anything already entered. Nothing here is a real `CHECKIN` until Step 5's Save actually runs.
+
 ```
 Step 1: Choose venue
-  → Search box
-  → Coordinate-based nearby venue suggestions
-  → Not found: add a new venue (name + map pin + address note)
+  → Search box: searches Obur's own venues first (coordinate-based
+    nearby suggestions), with Google Places Autocomplete results
+    blended in for venues not yet on the platform
+  → Selecting a Google result carries its place_id, address, and
+    district straight through — no extra typing
+  → Not found in either source: add a new venue manually (name, map
+    pin, free-text address, district — district is required either
+    way, not just for the Autocomplete path)
+  → Either path runs through the same duplicate check before creating
+    a new row: exact place_id match resolves silently to the existing
+    venue; otherwise the existing 50-meter "did you mean this one?"
+    prompt (§13, ADR-0009)
 
 Step 2: Choose product(s)
   → Products previously logged at the selected venue are shown as chips
@@ -518,10 +702,16 @@ Step 3: Rate the products
   → Four large buttons: Bad | Average | Good | Very Good (left to right)
   → Once rated, the card flies upward and the next one appears
   → Cannot proceed until every product is rated
-  → Bottom section (optional): venue criteria — service, ambiance, worth it
+  → Bottom section — venue criteria: service, ambiance, worth it. Required,
+    not optional (see §8): every check-in guarantees exactly these three
+    additional data points toward the venue's own aggregate, regardless of
+    how many products the user happened to select in Step 2
 
 Step 4: Tell the story
   → Note field: placeholder "what stood out to you the most?"
+  → Typing @ autocompletes mutual followers only (§11) — no one else is
+    offered as a mention target
+  → Typing # opens free-text hashtag entry, capped at 5 per check-in (§7)
   → Photo: "add a photo — show us"
   → Visit date: defaults to today, editable
 
@@ -537,7 +727,12 @@ Step 5: Share
     "Close friends" resolves against the viewer's manually curated
     close-friends list on the check-in owner's account (see §11 and
     ADR-0006) — it is not a "followers-only" option.
-  → Save
+  → Save: submits with a client-generated idempotency key (§17) so a
+    dropped connection or a double-tap can't create a duplicate
+    check-in; a visible "sending" state covers the gap, and on mobile
+    a failed submission retries automatically once connectivity
+    returns. On success the `CHECKIN_DRAFT` this flow was autosaving to
+    is deleted — the real `CHECKIN` row is what remains.
 ```
 
 ### Multi-Product Decision
@@ -554,15 +749,51 @@ The same experience is packaged as a single check-in. The backend creates one `C
 
 **Likes are public; bookmarks are private.** A like on a check-in or list is a visible social signal — anyone who can see the content can see (and add to) its like count. A bookmark is the opposite: a personal "save this for later" note that only the person who made it can ever see. There is no bookmark count shown anywhere, on any check-in or list, to anyone. Liking or bookmarking something a user can't see (a private check-in that isn't theirs, for example) is not possible — visibility is checked first either way.
 
+**@ Mentions require mutual following — not open to anyone, unlike a like or a bookmark.** Tagging a stranger in a check-in note would reintroduce exactly the unwanted-attention risk the platform has no comment or DM feature specifically to avoid (§4); requiring that the author follows the mentioned person *and* the mentioned person follows the author back keeps mentions inside an already-established, two-sided relationship. This restriction also makes blocking's existing behavior double as mention protection for free: blocking already auto-unfollows in both directions (above), which means a blocked pair no longer satisfies the mutual-follow requirement either — there's no separate rule needed to stop a blocked person from mentioning someone. A mention triggers a notification (below) but never overrides the mentioned check-in's own visibility (§7) — the mentioned person is told they were mentioned, not granted access to something they otherwise couldn't see. Existing mentions between two people are purged the moment they block each other, the same retroactive cleanup already applied to likes, bookmarks, and notifications.
+
+**# Hashtags are unrestricted free text, on check-ins and lists alike — up to 5 per item.** Unlike a mention, a hashtag doesn't target a person, so there's no relationship requirement; the cap exists purely to prevent keyword-stuffing a single post to game hashtag-based discovery (§12), not to limit expression. Tapping a hashtag anywhere opens a discovery page of every `public` hashtagged item — the same public-only scoping already applied everywhere else content gets aggregated or surfaced broadly (aggregate ratings, venue verification, a venue's representative photo). An offensive or spammy hashtag doesn't need its own moderation path — it's part of the check-in or list it's attached to, already reportable as that content (§11); no new report reason required.
+
+**Mute is the lighter counterpart to blocking — the relationship stays intact, only feed content is affected.** Unfollowing someone (a coworker, an acquaintance) to stop seeing their check-ins can feel socially awkward in a way muting doesn't; mute solves that specific case without touching anything else:
+
+- One-directional and silent: the muted person is never notified, and nothing about the follow relationship, their visibility, or their discoverability changes for them.
+- Affects the muting user's own feed only (both layers, §12) — the muted user's content simply never surfaces there. Search, Discover, venue pages, and product pages are untouched; muting isn't hiding, it's a feed preference.
+- Not derived from `FOLLOW` — a user can mute someone they don't follow (e.g. to keep a stranger's content out of Layer 2's algorithmic fill), unlike `CLOSE_FRIEND`.
+- No retroactive effect: existing likes, bookmarks, and notifications between the two people are untouched, and neither can be affected going forward either — muting has no bearing on any interaction, only on feed display.
+
+**Blocking is absolute, silent, and bidirectional — deliberately harsher than a visibility tier.** Where `close_friends`/`private` control who a user chooses to share with, blocking is about removing someone entirely, in both directions at once:
+
+- Blocking auto-unfollows in both directions (and, since `CLOSE_FRIEND` already cascades off `FOLLOW`, close-friend status is removed for free — no new logic needed there).
+- Visibility closes completely between the two people, `public` included — a block is not just another privacy tier a viewer can be excluded from, it overrides all three.
+- Neither person can find the other via search or Discover.
+- It's silent: the blocked person is never notified, and a blocked profile behaves exactly like a nonexistent one to them — the same "hidden must be indistinguishable from nonexistent" principle already applied to private check-ins (§10) extends here.
+- Existing likes, bookmarks, and notifications between the two people are purged in both directions at the moment of blocking — not just prevented going forward. This is a deliberately harsh, retroactive cleanup, decided because interpersonal-safety context (unlike an ordinary privacy setting) warrants leaving no trace rather than a lighter touch.
+- Where one person's identity would otherwise surface on something the other can see (e.g. a venue's "first discoverer," §13), it's anonymized to "unknown user" for that specific viewer — this changes *display*, not data. The blocked person's own check-ins, badges, and history remain fully theirs; only how their identity renders to the person who blocked them (or whom they blocked) is masked.
+- Admin moderation access is never affected by a block between two other users — reports need to stay reviewable regardless of who blocked whom.
+- Aggregate ratings are untouched: they're anonymous, platform-wide numbers with no per-viewer dimension, so a block (a relationship between two specific people) has nothing to act on there.
+
+Unblocking is a real, always-available action; nothing about the earlier relationship (follow status, close-friend status) is restored automatically — same as any other reversed social action in this system.
+
+**Reporting.** Three things can be reported: a check-in (its note or photo), a user profile, or a venue — each for a different reason. Check-ins and profiles carry interpersonal-safety risk; report reasons: spam, harassment, hate speech, sexual content, violence, fake account, other — matching the categories real platforms (Instagram, Twitter/X, Reddit) converge on, not invented from scratch. A venue report is a data-quality concern instead — wrong address, wrong name, permanently closed, duplicate — and is the *only* way a venue's details ever change after creation (§13): there's no direct user-editing of any venue field, not even by whoever added it, on a real abuse precedent from another app's community-edit feature (see §4). Both kinds land in the same admin-reviewed queue.
+
+Every report goes into a queue reviewed by a human admin — deliberately **no automatic threshold-based hiding** (e.g. "N reports auto-removes it"), unlike venue verification's check-in-count filter. The two situations aren't parallel: venue verification is zero-urgency and can sit unresolved forever with no harm, while an unreviewed harassment report is a real, time-sensitive harm — but automatic hiding at low report counts is also a known abuse vector itself (coordinated false reporting to silence someone), and at Obur's expected report volume (low, at a few-hundred-user scale) manual review doesn't have the scaling problem admin-reviews-everything had for venues. A reported user can always be blocked immediately by the person affected, independent of and faster than any admin action.
+
+An admin handling a check-in or profile report can dismiss it, remove the offending content, or suspend the account (`USER.status = suspended`, §6) — kept separate from `USER.role`, since role is permission level and status is standing, and conflating them would be a mistake. Suspension is admin-only and, unlike a user's own self-service account freeze (§6), never user-reversible. An admin handling a venue report can dismiss it, correct the reported field directly, mark the venue closed (`is_active = false` — stays visible, shown transparently, see §13), or suspend it (`is_suspended = true` — hidden entirely, see §13). Like account suspension, both are admin-only and never reachable through any user-facing endpoint.
+
+**Minimum standards this has to satisfy, non-negotiably:** Apple's App Store Review Guidelines §1.2 (user-generated content) requires, for any app with UGC, a mechanism to report objectionable content, a mechanism to block abusive users, published contact information a user can reach the team through, and the ability to remove content or terminate accounts in a reasonably timely way. Google Play's UGC policy asks for materially the same. These aren't aspirational — without them the app doesn't clear store review. A published support/abuse contact (even just an email address, shown in-app and in the store listing) is a small, concrete requirement that's easy to forget precisely because it's not a "feature."
+
+**A written Content Policy is a separate document from this reporting mechanism**, and still needs to exist: this system decides *how* a report gets handled, but "what actually counts as harassment, hate speech, spam" on Obur specifically needs to be written down somewhere a user (and an admin acting consistently, not case-by-case) can point to. That text should be legally reviewed before it's published, the same way Terms of Service and a Privacy Policy need to be — not drafted here as if it were a legal document. See §18.
+
 **Notification triggers:**
 
 - New follower (with a follow-back button)
 - Check-in like
 - List like
 - Badge earned
-- Verification of an added venue
+- Mention (never grants visibility into what triggered it — see above)
 
 Notifications are written synchronously by the same action that causes them (see ADR-0008) — there's no delay or background processing step between "someone followed you" and the notification existing.
+
+Venue verification (§13) deliberately does **not** trigger a notification — it's a cosmetic, low-stakes signal ("this location definitely exists here," not a quality judgment), and notifying the adder the moment it flips felt like friction with no real payoff. It's visible passively on the venue page whenever it happens to update.
 
 ---
 
@@ -573,6 +804,8 @@ Notifications are written synchronously by the same action that causes them (see
 **Layer 1 — Followed users (primary):** Public check-ins and lists from users the account follows, shown chronologically. Requires no extra algorithm.
 
 **Layer 2 — Algorithmic fill (secondary):** Kicks in once content from followed users falls below a defined threshold of the total feed. It's the cold-start solution for a new user, and for an existing user it keeps the feed alive while they follow few people.
+
+Both layers exclude any user the account has muted (§11) or blocked (§11) — muting and blocking are feed inputs, not something layered on top after the fact.
 
 Algorithmic content ranking signals (in priority order):
 
@@ -592,15 +825,36 @@ When a user searches "Kadıköy döner":
 
 Among venues with an equal rating, recently logged content ranks higher; venues that have closed or declined in quality naturally sink.
 
+### Hashtags
+
+A hashtag's own page lists every `public` check-in and list carrying it, most recent first — the same public-only scoping used everywhere else content gets surfaced beyond its original audience (§11). Reachable two ways: tapping a hashtag inline wherever it appears, or typing `#` into Discover's search box (§5). The 5-per-item cap (§7, §11) exists to keep this page's ranking meaningful — an unbounded hashtag list would let a single post claim space across dozens of unrelated discovery pages, diluting the signal for everyone else using that tag genuinely.
+
 ---
 
 ## 13. Venue and Product Architecture
 
 ### Venue Identity
 
-Identity is built on coordinates, not on name. The `(lat, lng)` pair is the primary identifier. Duplicate detection: when a new venue is added, if another venue exists within a 50-meter radius, the user is asked "did you mean this one?"
+Identity is built on coordinates, not on name. The `(lat, lng)` pair is the primary identifier. Duplicate detection is two layers, not one (see ADR-0009):
 
-For cases like malls where multiple venues can share the same coordinates, the free-text `address_note` field is used ("3rd floor", "Block B entrance").
+1. **Exact match** — if the venue being added carries a `google_places_id` that an existing venue already has, that's a certain duplicate (Google's own identity says so). Resolves silently to the existing venue, no prompt, not overridable — there's nothing to confirm.
+2. **Proximity fallback** — for everything without a `google_places_id` match, if another venue exists within a 50-meter radius, the user is asked "did you mean this one?" and can confirm it's genuinely different.
+
+For cases like malls where multiple venues can share the same coordinates, the free-text `address_note` field is used ("3rd floor", "Block B entrance") — and the exact-match layer above is exactly what keeps that same scenario from producing false "possible duplicate" prompts once a venue actually has a `google_places_id`, since two different businesses in the same mall get two different Google identities.
+
+Every venue also records a `district` (ilçe) alongside `city` — required going forward, since "city" alone can't express "Kadıköy" as a scope for discovery, badges (§9), or product rankings (§13, below).
+
+**Verification is a cosmetic signal, not a quality one.** A venue can be marked verified once either a Google Places match plus at least N independent **public** check-ins confirm it, or — for venues Google hasn't indexed — both at least M independent **public** check-ins accumulate *and* an admin separately confirms it. Both conditions are required in the no-Google-match case, not either alone — the check-in count filters which venues are even worth an admin's time, it isn't a substitute for the admin's look. Only `public` check-ins count toward N/M, the same restriction the aggregate rating already applies (§8, §10 Step 5) — a `close_friends`/`private` check-in is real evidence to the person who made it, but counting it here would let a location get the platform's public "verified" mark off the back of a share nobody outside that circle ever saw, which undercuts the point of the visibility choice the same way it would for the aggregate label. It never affects search ranking or discoverability; it only answers "does this location definitely exist here?" See ADR-0009.
+
+**No user can edit a venue directly, not even whoever added it.** Every correction — wrong address, wrong name, permanently closed, duplicate — goes through the same report mechanism as check-ins and profiles (§11), reviewed by an admin before anything changes. Direct community editing was considered and rejected: unmoderated edits to shared location data have a real abuse precedent (see §4), and the risk isn't worth the convenience.
+
+**Closed and suspended are two different states, not one.** `is_active = false` means the business itself has stopped operating — set by an admin acting on a report, never automatically. The venue stays fully visible, shown transparently (grayed out, clearly marked inactive), the same "historical data is never deleted" principle already applied to venues' own check-ins (§7). `is_suspended = true` is a separate, harsher admin moderation action: the venue is hidden entirely from anyone but an admin, and its own page returns a generic "venue not found" — not an explanation that it was suspended, the same "hidden must be indistinguishable from nonexistent" principle already applied to blocked profiles (§11) and private check-ins (§10), deliberately not leaking a moderation action to whoever's affected by it. Check-ins that reference a suspended venue are unaffected anywhere else they appear (a user's own feed or profile) — only the venue's own page becomes inaccessible.
+
+**A venue has no photo of its own — its representative image is derived, not uploaded or set by anyone.** Consistent with "no say for businesses" (§4) and no-direct-editing above, a venue's face is whichever of its own **public** check-ins currently has the most likes — nobody, including whoever added the venue, chooses or uploads it directly. Scoped to `public` check-ins only: a `close_friends`-visibility check-in can be liked plenty within that circle, but surfacing its photo on the venue's fully public page would leak a deliberately restricted share to everyone, defeating the point of the visibility choice — the same leak risk already reasoned through for signed photo URLs (§17). Computed live at read time, not stored or cached on `VENUE` — cheap enough per-venue not to need it, and it means the representative photo is automatically always current (a deleted or newly-more-liked check-in updates it for free, no invalidation logic to get wrong). A venue with no public check-ins yet simply shows no photo, the same "not enough data" treatment already used for the aggregate rating label (§8). This also settles how a list displays the venues inside it (§6): each venue card reuses this same derived photo — a list itself needs no separate cover-image feature.
+
+**The selection is per-viewer, not a single global answer — the same treatment already given to "first discoverer."** A representative photo is always sourced from one specific person's specific check-in, which puts it in the same category as "first discoverer" (§11: anonymized per-viewer when blocking is involved), not the aggregate rating (genuinely anonymous, no single attributable person, untouched by blocking). So the query is "the most-liked public check-in, excluding anyone the current viewer has blocked or is blocked by" — the same exclusion `FOLLOW`/feed content already applies for blocking (§12), reused here rather than invented fresh. For a blocked pair, this naturally surfaces the next-best-liked eligible photo instead, with no separate "pick a runner-up" logic needed. Scoped to blocking only, not muting — muting is deliberately limited to feed display (§11) and doesn't touch venue pages. Since the photo only ever comes from a `public` check-in, and blocking is the only thing that can make a `public` check-in invisible to a specific viewer (§11), the same exclusion that picks the photo also already guarantees its click-through (below) is valid for whoever it's shown to — no separate check needed at click time.
+
+**The photo is clickable through to its source check-in.** Not a prominent "photo by @username" credit sitting next to the image — that would visually compete with the "first discoverer" badge and risk exactly the confusion it's meant to avoid — just the image itself, tappable, taking the viewer to that check-in. The venue page already lists every check-in at that venue, so this doesn't expose anything not already reachable, just shortens the path; it's also a small, low-friction reward for contributing a photo good enough to represent the place, without inventing a new badge or mechanic for it.
 
 ### Product Hierarchy
 
@@ -620,9 +874,13 @@ This structure answers two questions at once: "what's available at this venue?" 
 
 ### Difference Between Venue and Product Pages
 
-**Venue page:** every product at that venue with aggregate ratings, service/ambiance/value averages, all check-ins, the first discoverer.
+**Venue page:** every product at that venue with aggregate ratings, service/ambiance/value averages, all check-ins, the first discoverer — the *only* "first" badge in the system; there's no separate "first to try this product" concept (see §9).
 
-**Product page:** check-ins for that specific product at that venue + how the product ranks across other venues with the same `GLOBAL_PRODUCT_TYPE`. The "first to try this product on the platform" badge is shown here.
+**Product page:** check-ins for that specific product at that venue, plus a "diğer mekanlar" (other venues) ranking of every `PRODUCT` sharing the same `GLOBAL_PRODUCT_TYPE`, sorted by that product's own product-level score (§8) — the same pure, never-blended-with-venue-experience number shown as its label, reused here as a sort key rather than a display value — "where's the best kuşbaşılı pide?" answered directly. Optionally scoped by `district`/`city`. This ranking is the same underlying component surfaced a second way from Discover's product filter, not a separate feature.
+
+### Personalized History
+
+A user's own profile shows their single highest-rated `CHECKIN_PRODUCT` per `GLOBAL_PRODUCT_TYPE` they've rated ("en iyi döner: Develi, en iyi kahve: Petra") — a lightweight, no-new-schema read over data that already exists, meant to reinforce a sense of discovery and progress on the user's own profile rather than to rank anything for other people.
 
 ---
 
@@ -708,7 +966,85 @@ The first city is Istanbul. 500 users in 1 city gets far closer to critical mass
 
 ---
 
-## 17. Open Decisions
+## 17. Non-Functional Requirements
+
+### Offline & Draft Reliability
+
+**A check-in must never be silently lost to a bad connection — this is an MVP requirement, not a client-side nicety.** The check-in flow is the platform's core action, takes real effort to complete (venue, ratings, photo, note across 5 steps, §10), and the venue interiors it's used in are exactly where a mobile connection is least reliable. Losing that data to a dropped connection is a core-loop failure, held to the same "not optional polish" bar as blocking or reporting (§4) — not a "nice if the client gets to it" item.
+
+Two distinct mechanisms cover two distinct moments:
+
+- **Before submission — an explicit, cross-device draft.** A user can save an in-progress check-in and resume it on any device, including switching from mobile to web mid-flow. This has to be server-synced, not device-local: the same "state must be consistent across every device a user is signed into" standard already applied to notification read-state (ADR-0008) applies here — a draft that only exists on the phone it was started on isn't really solving the problem for a multi-platform product. Modeled as a separate `CHECKIN_DRAFT` table (§7), not an `is_draft` flag on `CHECKIN` itself: a flag would require every aggregate-rating, badge, and feed query to remember to filter it out forever, and this platform has already hit that exact failure mode twice in Phase 4 (an existence-leak and a stale-visibility bug, both "a query somewhere forgot to filter"). A separate table makes leaking a draft into rating/badge/feed logic structurally impossible rather than a matter of developer discipline. On final submit, the draft's data becomes a real `CHECKIN` row and the draft row is deleted.
+- **After submission — safe retries, not duplicates.** Once the user hits submit, a client-generated idempotency key travels with the request; retrying with the same key (because the first response never arrived, or the user tapped submit twice) returns the original check-in instead of creating a second one. This is what actually prevents a flaky connection from corrupting aggregate ratings or badge counts with duplicate check-ins.
+
+A pending submission shows a visible "sending" state to the user who created it — never to anyone else; nothing partially-submitted is ever shown as if it were a real, published check-in.
+
+**The automatic, no-user-action retry-on-reconnect guarantee is mobile-only.** Checking in happens in the moment, at the venue — realistically a mobile action, the same way Instagram posting essentially never happens from its web client. Building true offline-first engineering (surviving a killed app, background sync) for the web client isn't worth the cost for a use case it barely serves. Web still gets the draft mechanism above (it's just a normal API call, no special offline capability needed) and the idempotency-key safety net — a failed web submission doesn't lose data, it just isn't retried automatically in the background the way a mobile one is.
+
+**Web being a narrower client doesn't mean it's a neglected one.** Whatever web does support must stay fast and responsive — the standard here is "PC Instagram," a client so visibly an afterthought that it changed real usage behavior; Obur's web client should do less than mobile by deliberate scope, never by neglect.
+
+`CHECKIN_DRAFT` is deliberately not generalized to list or venue creation. Both lack the combination that actually justifies it: high per-submission effort bundled into one atomic request, at the exact moment a connection is weakest. Lists are built incrementally (each item add is already its own small, durable, retryable action — the existing idempotent-create pattern used elsewhere, §11, already covers it); venue creation is a handful of fields, far lower effort, and typically happens as a sub-step inside the check-in flow itself, §10, inheriting whatever protection that already has.
+
+### Rate Limiting & Fake-Account Resistance
+
+Every public endpoint gets a baseline rate limit (a general rule, not repeated here). A stricter tier applies to actions where repeated abuse does real damage, not just annoyance:
+
+- **Check-in creation** — the most important one. Obur's entire value proposition rests on ratings coming from real, distinct people (§2); rapid repeated check-ins from one actor can directly inflate or deflate a venue's aggregate rating (§8), which is a direct attack on the platform's core credibility, not a minor abuse.
+- **Report submission** — already identified as an abuse vector in its own right (§11): unlimited reporting enables coordinated false-reporting to harass or silence someone.
+- **Venue creation** — repeated spam venues pollute Discover, and can be used to game verification's check-in-count filter (§13) with venues that only exist to be checked into.
+- **Follow** — lower priority, but the well-known "mass-follow for attention" pattern is worth a limit too.
+
+**Fake accounts (sockpuppets) matter, but not equally everywhere — ranked by actual damage:** aggregate-rating manipulation is the most severe, since it attacks the same core credibility problem Obur exists to solve for (§2); gaming the Layer 2 feed-ranking like-count signal (§12) is next; a fake-follower "Social" badge (§9) is low-severity; gaming venue verification is the least severe of all, because verification was deliberately designed to be cosmetic and never affect ranking or discoverability (§13) — there's little to gain from faking it.
+
+**No phone verification, custom SMS OTP, or IP-based tracking at MVP — a deliberate scope decision, not an oversight.** Each was considered and set aside for a concrete reason: an unverified phone field adds signup friction and a new PII surface with no real anti-fraud value (verification's value comes specifically from the OTP step, which is what actually costs money); a self-built SMS OTP flow trades Clerk's flat, managed cost for a variable, self-secured one, including real exposure to SMS-pumping fraud if the send-OTP endpoint isn't perfectly rate-limited; IP correlation (even privacy-preserving, HMAC-hashed, never storing the raw address) is a real, well-understood technique, but the team made a deliberate bootstrap-stage call not to take on a data-handling responsibility in an area neither owner has direct experience with. MVP relies entirely on Clerk's existing free-tier friction — required, verified email; a 15-character minimum password with compromised-password rejection. Real fraud-detection tooling is deferred until actual abuse is observed, not built pre-emptively against a hypothetical — the same posture already taken toward rating-threshold calibration (§18).
+
+### Bulk-Extraction Resistance
+
+The abuse this guards against is different from fake accounts above: not someone corrupting data by creating it, but someone systematically copying data that's already meant to be visible — rebuilding Obur's curated venue database and aggregate ratings via scraping, without any of the community effort that produced them.
+
+- **Read endpoints get rate limits too, not just write ones.** Discover, search, and venue-listing calls are unlimited today only in the sense that nobody's decided otherwise; without a cap, a script can enumerate the entire dataset in minutes.
+- **Every list response is paginated, with a capped page size (tens of records, not thousands) — never an unbounded "return everything" response.** This forces a scraper into thousands of individual requests, which is exactly what the read rate limit above then catches.
+- **There is no bulk-export endpoint, as a standing design principle, not just an absent feature.** No user-facing "download all venues/users as CSV/JSON" capability is ever exposed — worth stating explicitly so it isn't accidentally added later as a convenience feature without this context.
+
+Detecting a scraping *pattern* specifically (one account paging through the entire dataset in an unnatural sequence, as opposed to normal browsing) is a further step beyond this — deferred to the same "once real abuse is observed" bucket as fake-account detection above, not built pre-emptively.
+
+### Private Check-in Photos Need Signed URLs — Public Ones Don't
+
+A check-in's own visibility (`public` / `close_friends` / `private`) is enforced by the backend on the `CHECKIN` row — but `photo_url` points at a file in a separate system (Cloudflare R2), reachable directly if the URL itself ever escapes (browser cache, a screenshot, a log line) without ever passing through the backend's `can_view` check at all. That's a real gap: a private check-in's photo could be reachable even though the check-in itself correctly isn't. Text fields (`note`, ratings) don't have this problem — they never leave the database, so every read of them is already gated by the same authorization the rest of the app relies on; a photo is the one field type that lives outside that boundary by construction.
+
+The fix is scoped narrowly: for `close_friends`/`private` check-ins, `photo_url` is served as a short-lived, cryptographically signed URL (R2/S3-style pre-signed URL), generated only after the backend's own `can_view` check already passed — not a permanent link. **Public check-in photos and profile avatars are deliberately left alone.** Signing them adds no real protection, since "public" already means "no one is excluded" — there's no boundary left to enforce — while it does add a real cost: signed URLs typically defeat straightforward CDN caching, since the URL itself changes on each generation. Bulk copying of public photos specifically is a scraping concern, covered above, not an access-control one.
+
+### The Governing Principle: No Access Path Around the Application
+
+Everything in this document that touches authorization — `can_view`, `ensure_visible_and_owned`, the existence-leak standard applied to private check-ins and blocked profiles, signed photo URLs above — is really one principle applied repeatedly: **the only way to reach any piece of data must be through the application's own authorization logic. No side door.**
+
+That principle has a real boundary, though, worth stating explicitly rather than assuming it's covered: everything above protects the *application's own access path* — every API request passes through `can_view` because there is no other way to ask the API for data. It does nothing for someone who bypasses the application entirely and reaches the data store directly (a compromised database credential, an exposed backup, a leaked connection string). `can_view` is application code; it isn't a property of the database itself. Closing that gap needs a second, separate layer: the database encrypted at rest (so a stolen disk or backup isn't readable), and the database reachable only from the backend service, never directly from the outside. This is infrastructure/hosting configuration, not application logic — see §18 for what still needs verifying here before launch.
+
+### Photo Upload Standards
+
+Applies uniformly to both upload surfaces that actually exist — `CHECKIN.photo_url` and `USER.avatar_url`. A venue has no upload surface of its own (§13); a list has no cover image at all (§6, §13).
+
+- **Formats accepted**: JPEG, PNG, HEIC (converted server-side to a web-standard format, since HEIC doesn't render in every browser), WebP. No animated formats — a check-in or avatar photo is a static image.
+- **Client-side compression before upload**: resized to a max ~2000-2500px on the longest edge, re-encoded at roughly 80-85% JPEG quality, before the request is ever sent. A raw phone photo can be 10-20MB; nothing in this product ever displays one at that size, and compressing before upload directly helps the offline/weak-connection case above (§17) — smaller payloads fail and retry faster.
+- **Server-side hard cap**: any upload over ~15MB is rejected outright at the API boundary — a safety net for a misbehaving client or an abuse attempt, not a size the normal path should ever approach.
+- **Multiple resolutions generated on upload, not one fixed size.** A phone's feed card and a desktop's full-screen view have very different real display sizes; serving one size to both means either wasting bandwidth on mobile or looking soft on a larger screen. Standard practice (the same approach Instagram, Letterboxd, and comparable apps use) — a small number of generated variants (e.g. thumbnail / medium / full), with the client requesting whichever fits its viewport.
+- **Cropping differs by context, everything else doesn't.** `avatar_url` is square (the universal convention for a profile picture, every comparable app does this); `photo_url` keeps its natural aspect ratio — forcing a food or venue photo into a square loses real information a user chose to include.
+- **All EXIF metadata is stripped on upload, not just GPS.** A phone photo can carry exact GPS coordinates, device model, and other embedded metadata a user never consciously chose to share — stripping only location data isn't enough, since other metadata fields (a device serial fragment, timestamps precise enough for correlation) can themselves be identifying. Applies to both `photo_url` and `avatar_url`, and happens server-side before anything is stored — Obur has no use for this metadata, only the risk of holding it.
+
+### Performance & Perceived Speed
+
+Targets grounded in published, external standards rather than picked arbitrarily:
+
+- **`obur-web` adopts [Core Web Vitals](https://web.dev/articles/defining-core-web-vitals-thresholds) as its baseline** — Google's real-user-measured "good" thresholds, evaluated at the 75th percentile of real users over a rolling 28-day window: LCP (loading) < 2.5s, INP (responsiveness) < 200ms, CLS (visual stability) < 0.1.
+- **Backend API response time targets a standard web-app tier, not a real-time (gaming/trading) one**: [P50 < 200ms, P90 < 500ms, P99 < 1s](https://medium.com/@jfindikli/the-ultimate-guide-to-faster-api-response-times-p50-p90-p99-latencies-0fb60f0a0198) for standard read endpoints (feed, search, venue/profile pages).
+- **Check-in creation is deliberately exempt from that tier.** Its heavier path — photo compression, EXIF stripping, multi-resolution generation (above), plus a synchronous verification/badge check (§9, §13) — realistically lands past 1 second, and that's acceptable as long as the UI shows explicit progress. [Published research on perceived wait time](https://uxuiprinciples.com/en/principles/response-time-limits) holds that responses under 100ms feel instant, 100ms-1s stays within a user's conscious-but-uninterrupted flow, and anything in the 1-10s range needs a visible progress indicator or users abandon the action. This is exactly why the "sending" state already decided for check-in submission (Offline & Draft Reliability, above) isn't just a nice touch — it's what keeps a multi-second submission from feeling broken.
+- **No numeric uptime target at MVP — stated explicitly, not left silently unaddressed.** Railway's hobby tier has no HA/failover guarantee, and building real redundancy would be wildly disproportionate to a 200-MAU target (§15). The one concrete decision made here: a friendly "we'll be back shortly"-style client message on unreachability, instead of a raw error — the actual uptime number itself is accepted as best-effort.
+
+**Local interaction feedback is a separate concern from network latency above, and has no excuse to ever be slow.** Selecting a rating, advancing the card stack (§10 Step 3), and similar in-flow actions never wait on the network — the check-in flow only talks to the backend once, at Step 5's Save — so these should render feedback essentially instantly (the same sub-100ms "feels instant" threshold cited above, here applied to local UI state rather than a round-trip). Concretely: the active product card reacts visibly the moment a rating is tapped, the transition to the next card reads as fluid and directional rather than an abrupt cut, and rating buttons are large, high-contrast targets — Fitts's Law again, the same principle already applied to the navigation bar's `+` button (§5). Haptic feedback on card transitions is a mobile-only affordance (no reliable equivalent exists in a web browser) — an enhancement where the platform supports it, not a requirement web has to fake.
+
+**Celebration is deliberately reserved for genuinely special moments, not spent on every interaction.** Completing a check-in, earning a badge, and becoming a venue's "first discoverer" each warrant a distinct, visually celebratory UI moment — consistent with badges being real, permanent status (§9), not routine game-loop noise. Everything outside those three stays calm and fluid rather than competing for the same attention: treating every tap as an occasion cheapens the ones that actually are one. None of this is manipulative engagement engineering (no streaks, no loss-aversion mechanics, no manufactured urgency — deliberately ruled out, §9) — it's proven interaction-design and perception research (the same class of finding already cited above) applied in service of a product that feels well-crafted to use, not one engineered to be hard to put down.
+
+## 18. Open Decisions
 
 The following decisions are not yet finalized and will be evaluated once initial user data comes in.
 
@@ -720,8 +1056,17 @@ The following decisions are not yet finalized and will be evaluated once initial
 | TRY-based pricing (future revenue model) | After user growth |
 | Timing of second-city expansion | After reaching critical mass in Istanbul |
 | Meilisearch migration threshold | Once PostgreSQL FTS hits a performance wall |
+| Fake-account / fraud-detection tooling (phone verification, IP correlation, etc.) | After real abuse is actually observed — see §17 |
+| Database-level isolation: does Railway's Postgres encrypt at rest by default, and is it network-reachable only from the backend or directly from the outside? | Research Railway's actual guarantees before launch — see §17 |
+| Accessibility (screen readers, color contrast, keyboard navigation) | Not addressed at MVP — real long-term concern, but not urgent enough to block launch; revisit once core product is stable |
 
----
+### Needs Legal Research, Not User Data
+
+Unlike the table above, these aren't waiting on product usage — they need an actual lawyer, not more check-ins:
+
+- **Turkish "sosyal ağ sağlayıcı" obligations** (Law No. 5651 and the Law No. 7253 amendments — local representative appointment, content-removal response-time requirements, etc.) apply above certain platform-size thresholds. Whether/when Obur crosses into scope at bootstrap stage (~200 MAU target) is genuinely unknown here and needs real legal consultation before launch, not an assumption either way.
+- **The Content Policy text itself** (§11) — what specifically counts as prohibited content on Obur — needs legal review before publishing, same as Terms of Service and a Privacy Policy do.
+- Whether GDPR applies at all (depends on whether/when any EU users are served) alongside KVKK, which applies regardless given the Turkey-first user base.
 
 ---
 
