@@ -20,7 +20,7 @@
 10. [Check-in Flow](#10-check-in-flow)
 11. [Social Graph](#11-social-graph)
 12. [Main Feed Algorithm](#12-main-feed-algorithm)
-13. [Venue and Product Architecture](#13-venue-and-product-architecture)
+13. [Venue Architecture](#13-venue-architecture)
 14. [Tech Stack](#14-tech-stack)
 15. [Infrastructure and Cost](#15-infrastructure-and-cost)
 16. [Go-to-Market Strategy](#16-go-to-market-strategy)
@@ -74,7 +74,7 @@ Zomato entered Turkey twice and permanently withdrew in 2021. Local players like
 
 - User curation takes precedence over anonymous mass rating
 - Businesses are given no say whatsoever
-- Product-level rating: the only platform that actually answers "where's the best döner"
+- Four separate venue criteria — taste, service, ambiance, and value — instead of one undifferentiated star, so "the food is great but you're paying for the view" is something the rating can actually say
 - Badge system for discovery status
 
 ---
@@ -156,11 +156,11 @@ App
 ├── Feed
 │   └── Search (returns check-ins)
 ├── Discover
-│   ├── Search (returns venue / product / user / list / hashtag)
+│   ├── Search (returns venue / user / list / hashtag)
 │   ├── Hashtag page (§12) — every public check-in/list carrying it
 │   └── Map view (opened from list or discover)
 ├── + Modal
-│   ├── Check-in creation flow (5 steps)
+│   ├── Check-in creation flow (4 steps)
 │   └── List creation
 ├── Notifications
 ├── Profile
@@ -185,13 +185,9 @@ App
 │       └── About / Help
 │           ├── Content Policy, Terms, Privacy Policy (§11, §18)
 │           └── Support / abuse contact — App Store §1.2 baseline (§11)
-├── Venue page
-│   ├── Products tab
-│   ├── Check-ins tab
-│   └── Photos tab
-└── Product page
-    ├── Check-ins at this venue
-    └── Other venues, ranked (§13) — "where's the best kuşbaşılı pide?"
+└── Venue page
+    ├── Check-ins tab
+    └── Photos tab
 ```
 
 ### Search Behavior
@@ -199,7 +195,7 @@ App
 The same search box returns different results depending on the current page:
 
 - **Search on Feed:** searches among check-ins from followed users
-- **Search on Discover:** returns venues, products, users, lists, and hashtags (typing `#` scopes directly to hashtags); can be narrowed with filter chips
+- **Search on Discover:** returns venues, users, lists, and hashtags (typing `#` scopes directly to hashtags); can be narrowed with filter chips
 
 Tapping an `@mention` anywhere navigates straight to that person's profile; tapping a `#hashtag` anywhere navigates to its hashtag page (§12).
 
@@ -218,11 +214,10 @@ Tapping an `@mention` anywhere navigates straight to that person's profile; tapp
 | Follow users | One-directional, no approval | P0 |
 | Block users | Absolute, silent, bidirectional — closes visibility entirely and purges past likes/bookmarks/notifications between the two people (§11) | P0 |
 | Report content / accounts / venues | Check-in, profile, or venue — human-reviewed queue, no auto-hide threshold; a venue report is the only way its details ever change after creation, no direct user-editing (§11, §13) — App Store §1.2 baseline | P0 |
-| Create check-in | 5-step flow | P0 |
+| Create check-in | 4-step flow | P0 |
 | Feed | Chronological check-ins and lists from followed users | P0 |
-| Discover | Venue / product / user search, city filter | P0 |
-| Venue page | Aggregate rating, products, check-ins | P0 |
-| Product page | Check-ins at that venue + same product ranked across other venues | P0 |
+| Discover | Venue / user / list search, city filter | P0 |
+| Venue page | Aggregate rating, check-ins, photos | P0 |
 | Profile | Check-ins, favorites, lists, achievements | P0 |
 | Badge system | Bronze / silver / gold tiers, rarity display | P0 |
 | List creation | User curation, map display, freely reorderable | P1 |
@@ -244,7 +239,7 @@ Tapping an `@mention` anywhere navigates straight to that person's profile; tapp
 | Recent likes view | A user's own like history, across check-ins and lists | P1 |
 | @ Mentions | Mutual-followers only, notifies but never overrides visibility (§11) | P1 |
 | # Hashtags | Free text, up to 5 per check-in/list, own discovery page, public-only (§11, §12) | P1 |
-| Personalized history | Profile shows the user's own highest-rated instance per product type ("en iyi döner: X") | P1 |
+| Personalized history | Profile shows the user's own highest-rated venue per venue category ("en iyi dönerci: X") — see §13 | P1 |
 | Share cards | Branded, shareable image cards for a check-in/list/venue, with low-friction one-tap sharing to Instagram/WhatsApp/etc. — mostly client-side, deferred until client work starts | P1 |
 
 ### v2.0 (Next Release)
@@ -252,6 +247,7 @@ Tapping an `@mention` anywhere navigates straight to that person's profile; tapp
 | Feature | Description |
 |---------|-------------|
 | "You Might Like" shelf | Venue suggestions based on taste overlap; not enabled until enough data has accumulated |
+| Product layer | Per-item logging and rating within a check-in, and the cross-venue "where's the best döner" ranking built on it. Removed from MVP and gated on density, not abandoned — at MVP volume no item can reach §8's rating floor, so the feature would cost two steps on the core action and return no label. See [ADR-0011](https://github.com/oburapp/obur-docs/blob/main/adr/0011-drop-product-layer-four-venue-criteria.md) |
 | Profile suggestions | User suggestions based on shared taste and followers |
 | Expansion to a second city | Same "enthusiast first, then organic growth" playbook |
 
@@ -316,6 +312,23 @@ MUTE
                                           -- muted whether or not they're followed,
                                           -- see §11
 
+BLOCK
+  blocker_id    UUID FK → USER ON DELETE CASCADE
+  blocked_id    UUID FK → USER ON DELETE CASCADE
+  created_at    TIMESTAMPTZ
+  PRIMARY KEY (blocker_id, blocked_id)
+                                          -- CHECK (blocker_id != blocked_id)
+                                          -- index on blocked_id, for the
+                                          -- reverse-direction lookup
+                                          -- Stored directionally, enforced
+                                          -- bidirectionally: every visibility
+                                          -- query asks whether a row exists in
+                                          -- either direction, but only the
+                                          -- blocker may unblock, and the blocked
+                                          -- person is never told a block exists
+                                          -- — both need the direction. Same shape
+                                          -- as FOLLOW. See ADR-0010
+
 VENUE_CATEGORY
   id            UUID PK
   slug          VARCHAR UNIQUE           -- language-independent reference: "food", "cafe", "bar"
@@ -362,32 +375,20 @@ VENUE_SAVE
                                           -- UNIQUE (user_id, venue_id, type)
   created_at    TIMESTAMPTZ
 
-GLOBAL_PRODUCT_TYPE
-  id            UUID PK
-  slug          VARCHAR UNIQUE           -- language-independent reference: "doner", "filter-coffee"
-  category_id   UUID FK → VENUE_CATEGORY
-
-GLOBAL_PRODUCT_TYPE_TRANSLATION
-  product_type_id UUID FK → GLOBAL_PRODUCT_TYPE
-  locale          VARCHAR                -- "tr", "en"
-  name            VARCHAR                -- "Döner", "Doner", "Kebab"
-  PRIMARY KEY (product_type_id, locale)
-
-PRODUCT
-  id            UUID PK
-  venue_id      UUID FK → VENUE
-  global_type_id UUID FK → GLOBAL_PRODUCT_TYPE
-  name          VARCHAR                  -- venue-specific name, entered by the user
-  is_available  BOOLEAN DEFAULT TRUE
-  created_at    TIMESTAMPTZ
-
 CHECKIN
   id            UUID PK
   user_id       UUID FK → USER
   venue_id      UUID FK → VENUE
+  rating_taste    SMALLINT NOT NULL     -- 1-4, required — food and drink quality.
+                                          -- The only field measuring the food itself;
+                                          -- added when the product layer was removed,
+                                          -- see ADR-0011
   rating_service  SMALLINT NOT NULL     -- 1-4, required
   rating_ambiance SMALLINT NOT NULL     -- 1-4, required
-  rating_value    SMALLINT NOT NULL     -- 1-4, required ("worth it?")
+  rating_value    SMALLINT NOT NULL     -- 1-4, required — value for money. The only
+                                          -- price dimension: an excellent venue that
+                                          -- overcharges scores well on the other
+                                          -- three and can only be marked down here
   note          TEXT
   photo_url     VARCHAR                 -- served as a short-lived signed URL when
                                           -- visibility != public; a permanent link
@@ -399,7 +400,8 @@ CHECKIN
   visited_tz    VARCHAR                 -- IANA timezone at time of visit — used for badge calculation
   deleted_at    TIMESTAMPTZ             -- NULL unless soft-deleted; a check-in already
                                           -- factored into a badge or aggregate must
-                                          -- never be truly deleted (see ADR-0005)
+                                          -- never be truly deleted (see ADR-0011,
+                                          -- which supersedes ADR-0005)
   idempotency_key VARCHAR               -- client-generated; UNIQUE (user_id,
                                           -- idempotency_key) — a retried submission
                                           -- with the same key returns this row
@@ -410,9 +412,10 @@ CHECKIN_DRAFT
   id            UUID PK
   user_id       UUID FK → USER
   venue_id      UUID FK → VENUE          -- nullable — venue may not be chosen yet
-  rating_service  SMALLINT               -- nullable — a draft is incomplete by
+  rating_taste    SMALLINT               -- nullable — a draft is incomplete by
                                           -- definition, unlike CHECKIN's own
                                           -- required version of this field
+  rating_service  SMALLINT               -- nullable, same reason
   rating_ambiance SMALLINT               -- nullable, same reason
   rating_value    SMALLINT               -- nullable, same reason
   note          TEXT
@@ -425,19 +428,7 @@ CHECKIN_DRAFT
                                           -- impossible for a draft to leak into
                                           -- aggregate/badge/feed queries; see §17.
                                           -- Promoted to a real CHECKIN row (and
-                                          -- deleted) on final submit; product-level
-                                          -- ratings within a draft are represented
-                                          -- more loosely than CHECKIN_PRODUCT's
-                                          -- referential-integrity model, since a
-                                          -- draft carries no such guarantee — exact
-                                          -- shape left as an implementation detail
-
-CHECKIN_PRODUCT
-  id            UUID PK
-  checkin_id    UUID FK → CHECKIN
-  product_id    UUID FK → PRODUCT       -- UNIQUE (checkin_id, product_id): a product
-                                          -- can't be rated twice in the same check-in
-  rating        SMALLINT NOT NULL       -- 1-4; immutable once created — see ADR-0005
+                                          -- deleted) on final submit
 
 CHECKIN_LIKE
   user_id       UUID FK → USER
@@ -538,17 +529,66 @@ USER_BADGE
   is_pinned     BOOLEAN DEFAULT FALSE
   earned_at     TIMESTAMPTZ
   PRIMARY KEY (user_id, badge_id)
+
+CONTENT_REPORT
+  id            UUID PK
+                                          -- an interpersonal-safety report on a
+                                          -- check-in or a profile — see §11
+  reporter_id   UUID FK → USER ON DELETE SET NULL
+                                          -- a report is a moderation record, not
+                                          -- personal content: it survives the
+                                          -- reporter's account deletion with the
+                                          -- identity dropped, like VENUE.added_by
+  target_type   VARCHAR                  -- checkin | user
+  target_id     UUID                     -- deliberately not a real FK: a CHECKIN
+                                          -- can be admin-purged and a USER row is
+                                          -- destroyed by account deletion, so a
+                                          -- real FK would force a choice between
+                                          -- cascading the audit trail away and
+                                          -- blocking the purge — see ADR-0010
+  reason        VARCHAR                  -- spam | harassment | hate_speech |
+                                          -- sexual_content | violence |
+                                          -- fake_account | other
+  status        VARCHAR DEFAULT 'pending' -- pending | dismissed | actioned;
+                                          -- drives the admin queue, never
+                                          -- accumulates toward an automatic
+                                          -- action — see §11
+  resolved_by   UUID FK → USER, nullable -- the admin who acted
+  resolved_at   TIMESTAMPTZ, nullable
+  created_at    TIMESTAMPTZ
+                                          -- UNIQUE (reporter_id, target_type,
+                                          -- target_id)
+
+VENUE_REPORT
+  id            UUID PK
+                                          -- a data-quality report on a venue —
+                                          -- see §11 and §13
+  reporter_id   UUID FK → USER ON DELETE SET NULL
+  venue_id      UUID FK → VENUE          -- a real FK, unlike CONTENT_REPORT's
+                                          -- target: a VENUE row is never deleted
+                                          -- (is_active / is_suspended instead), so
+                                          -- the target's existence is guaranteed
+  reason        VARCHAR                  -- wrong_address | wrong_name |
+                                          -- permanently_closed | duplicate | other
+  status        VARCHAR DEFAULT 'pending' -- pending | dismissed | actioned
+  resolved_by   UUID FK → USER, nullable
+  resolved_at   TIMESTAMPTZ, nullable
+  created_at    TIMESTAMPTZ
+                                          -- UNIQUE (reporter_id, venue_id)
+                                          -- The only path by which any venue field
+                                          -- ever changes after creation — there is
+                                          -- no direct user-editing, see §13
 ```
 
 ### Key Design Decisions
 
 **Venue identity is built on coordinates.** The name can change, but coordinates are stable data. When a new venue is added, existing venues within a 50-meter radius are checked for duplicate detection.
 
-**CHECKIN and CHECKIN_PRODUCT are separate.** A single check-in can contain multiple products; each product carries its own rating. Venue-level criteria (service, ambiance, worth it) are entered once per check-in.
+**A check-in rates the venue on four criteria, and nothing below the venue.** Taste, service, ambiance, and value are entered once per check-in and are all required. There is deliberately no per-item layer: an earlier design logged and rated each product within a check-in, and it was removed because no item could reach §8's rating floor at this platform's scale, so it cost two steps on the core action and returned no label. What was eaten belongs in `note`, which a reader gets more from anyway. `rating_taste` is what carries food quality now, and `rating_value` is the only price dimension — the rest of the criteria say nothing about what it cost. See [ADR-0011](https://github.com/oburapp/obur-docs/blob/main/adr/0011-drop-product-layer-four-venue-criteria.md).
 
-**Historical data is never deleted.** If a venue closes, `is_active` becomes `false` — it stays fully visible, shown transparently as inactive, and its check-ins remain as an archive. This is a different state from `is_suspended`, an admin moderation action that hides a venue entirely (see §13); neither is user-settable, both change only through a report an admin acts on. If a product is removed from the menu, `is_available` becomes `false` — it's no longer suggested for new check-ins but still appears in past records.
+**Historical data is never deleted.** If a venue closes, `is_active` becomes `false` — it stays fully visible, shown transparently as inactive, and its check-ins remain as an archive. This is a different state from `is_suspended`, an admin moderation action that hides a venue entirely (see §13); neither is user-settable, both change only through a report an admin acts on.
 
-**Account deletion is the one deliberate exception to "historical data is never deleted," and it's permanent, not soft.** Unlike a single check-in (`CHECKIN.deleted_at`, recoverable in principle, only an admin can truly purge one), deleting an account purges everything personal to it outright: every check-in and its `CHECKIN_PRODUCT`/`CHECKIN_LIKE`/`CHECKIN_BOOKMARK`/`CHECKIN_MENTION` rows, every list and `LIST_ITEM`, every `VENUE_SAVE` — the same permanent-purge mechanism an admin takedown already uses, just user-triggered instead of admin-triggered. Aggregate ratings and badges derived from that content simply recompute without it; nothing needs to leave a placeholder behind. The one exception within the exception: a `VENUE` the account added is not personal content — it's a shared resource other users rely on — so it survives with `added_by` set to `NULL` rather than being deleted or orphaned. Chosen deliberately over a softer "anonymize but keep the content" approach (the model blocking uses for display, §11): once a user asks to be forgotten, the data itself is gone, not just its attribution.
+**Account deletion is the one deliberate exception to "historical data is never deleted," and it's permanent, not soft.** Unlike a single check-in (`CHECKIN.deleted_at`, recoverable in principle, only an admin can truly purge one), deleting an account purges everything personal to it outright: every check-in and its `CHECKIN_LIKE`/`CHECKIN_BOOKMARK`/`CHECKIN_MENTION` rows, every list and `LIST_ITEM`, every `VENUE_SAVE` — the same permanent-purge mechanism an admin takedown already uses, just user-triggered instead of admin-triggered. Aggregate ratings and badges derived from that content simply recompute without it; nothing needs to leave a placeholder behind. The one exception within the exception: a `VENUE` the account added is not personal content — it's a shared resource other users rely on — so it survives with `added_by` set to `NULL` rather than being deleted or orphaned. Chosen deliberately over a softer "anonymize but keep the content" approach (the model blocking uses for display, §11): once a user asks to be forgotten, the data itself is gone, not just its attribution.
 
 **`HASHTAG.tag` is normalized with Turkish-aware casing, not a naive lowercase.** Turkish's dotted/dotless İ-I distinction (`İstanbul`.lower() and `Istanbul`.lower() diverge under a locale-naive transform) means `#AnadoluMutfağı` and `#anadolumutfağı` could silently end up as two different rows instead of one if normalization doesn't account for it — the same class of subtle text-processing bug `LIST_ITEM.position`'s `COLLATE "C"` requirement already caught elsewhere in this schema (ADR-0007). Locale-aware casing (or a Turkish-specific case-folding table) is required at write time, not left to whatever the database's default collation happens to do.
 
@@ -560,11 +600,15 @@ USER_BADGE
 
 **Likes are a visible signal; bookmarks are private — two separate concepts, two separate table pairs.** `CHECKIN_LIKE`/`LIST_LIKE` are public counts. `CHECKIN_BOOKMARK`/`LIST_BOOKMARK` are personal save-for-later notes nobody else can ever see — there's no bookmark count anywhere in the product. See ADR-0006.
 
+**`BLOCK` is stored directionally but enforced bidirectionally.** The row records who blocked whom, exactly like `FOLLOW`; every visibility query then asks whether a row exists in *either* direction. Storing a symmetric pair instead would have been simpler but loses two things the feature actually needs: only the blocker may unblock (§11), and the blocked person must never learn a block exists — both require knowing which way it runs. See [ADR-0010](https://github.com/oburapp/obur-docs/blob/main/adr/0010-blocking-and-reporting-schema.md).
+
+**Reports are split into two tables by concern, not three by target.** `CONTENT_REPORT` (check-ins and profiles) and `VENUE_REPORT` are separate because §11 already treats them as different things: different reason vocabularies, different admin resolutions, and different urgency — an unreviewed harassment report is ongoing harm, a wrong address can wait. The split also lets each keep the strongest integrity it honestly can. `VENUE_REPORT.venue_id` is a real foreign key, because a `VENUE` row is never deleted; `CONTENT_REPORT.target_id` deliberately isn't, because a check-in can be admin-purged and a user row is destroyed outright by account deletion — a real foreign key there would force a choice between cascading away the record of *why* something was removed and blocking the purge itself. This is the same `CHECKIN_LIKE`-vs-`NOTIFICATION` question the schema has answered before, applied per case rather than picking one pattern for both. See [ADR-0010](https://github.com/oburapp/obur-docs/blob/main/adr/0010-blocking-and-reporting-schema.md).
+
 **LIST_ITEM ordering uses fractional indexing, not an integer column.** Reordering, inserting, or removing an item writes only that one row — no renumbering of neighboring items regardless of list size. See ADR-0007.
 
 **NOTIFICATION rows are written synchronously, in the same transaction as the event that causes them.** No queue, no background worker. `read_at` lives on the backend row, so read state is automatically consistent across every device a user is signed into. See ADR-0008.
 
-**Global-ready design principles.** All timestamps are stored as UTC; the `visited_tz` field records the user's local timezone at the time of the visit and is used in badge calculations. User-facing labels (`VENUE_CATEGORY`, `GLOBAL_PRODUCT_TYPE`, `BADGE`) live in translation tables; adding a new language to the system only requires adding the relevant translation rows. `slug` fields provide a language-independent reference: the code uses `"food"`, and the display resolves independently of language. `country_code` follows ISO 3166-1 alpha-2, `locale` follows BCP 47, `timezone` follows the IANA standard.
+**Global-ready design principles.** All timestamps are stored as UTC; the `visited_tz` field records the user's local timezone at the time of the visit and is used in badge calculations. User-facing labels (`VENUE_CATEGORY`, `BADGE`) live in translation tables; adding a new language to the system only requires adding the relevant translation rows. `slug` fields provide a language-independent reference: the code uses `"food"`, and the display resolves independently of language. `country_code` follows ISO 3166-1 alpha-2, `locale` follows BCP 47, `timezone` follows the IANA standard.
 
 **Auth identity is provider-agnostic by field name.** `USER.auth_provider` ("clerk" today) and `auth_provider_id` are deliberately not Clerk-specific field names. Code outside the auth module never sees a provider-specific type — only this column pair. Switching or adding an auth provider later means new rows, not a rename migration. Kept in sync via the provider's webhooks (not just at first login), since identity fields can change on the provider's side independently of Obur.
 
@@ -572,7 +616,7 @@ USER_BADGE
 
 ## 8. Rating System
 
-### User Input (CHECKIN_PRODUCT.rating)
+### User Input (the four CHECKIN rating fields)
 
 Four options, no neutral option:
 
@@ -587,23 +631,30 @@ An even number of options with no neutral choice pushes the user to pick a real 
 
 ### Venue Criteria (CHECKIN fields, required)
 
-| Field | Description |
-|------|------|
-| rating_service | Service quality |
-| rating_ambiance | Ambiance (including music, lighting, decor) |
-| rating_value | "Worth it?" — not price/performance, but the payoff of the overall experience |
+| Field | Türkçe | Description |
+|------|--------|------|
+| rating_taste | Lezzet | Food and drink quality — the only criterion measuring what was actually consumed |
+| rating_service | Servis | Service quality |
+| rating_ambiance | Ambiyans | Ambiance (including music, lighting, decor) |
+| rating_value | Fiyat | Value for money — is it worth what it costs |
 
-Required on every check-in, not optional (see §10 Step 3) — every check-in guarantees exactly these three additional data points toward the venue's own aggregate below, regardless of how many products were selected in Step 2.
+All four are required on every check-in (see §10 Step 3), so every check-in contributes exactly four data points to the venue's aggregate below — the same four, every time, with no variation between check-ins.
+
+`rating_taste` exists because nothing else measures the food. It was added when the per-item product layer was removed ([ADR-0011](https://github.com/oburapp/obur-docs/blob/main/adr/0011-drop-product-layer-four-venue-criteria.md)), which until then had been the only place food quality was recorded at all.
+
+`rating_value` is deliberately about **price**, and it is the only criterion that is. An earlier version defined it as "the payoff of the overall experience," which — once taste, service, and ambiance are each rated separately — overlapped all three and measured nothing of its own. A venue can be excellent on those three and still charge three times what it's worth; this is the only field that can say so.
 
 ### Aggregate Scores
 
-Deliberately uses different vocabulary from user input — an earlier version of this table didn't actually honor that (four of its eight labels were the exact same words as the input scale). This version is a fully deterministic statistical procedure, not a table to eyeball, and it's applied at **two distinct levels** that must stay separate:
+Deliberately uses different vocabulary from user input — an earlier version of this table didn't actually honor that (four of its eight labels were the exact same words as the input scale). This version is a fully deterministic statistical procedure, not a table to eyeball.
 
-**Product-level score — stays pure, never blended with anything else.** Pool: every `CHECKIN_PRODUCT.rating` for one specific product (on that product's own page), or for every product at one venue (in that venue's product listing). This is the number §13's cross-venue "best kuşbaşılı pide" ranking sorts by — mixing in a venue's own service/ambiance would let a slow-service venue's excellent food rank lower for reasons that have nothing to do with the food itself, so this pool is food-quality only, always.
+**There is one score, at one level: the venue.** Pool: every `rating_taste`, `rating_service`, `rating_ambiance`, and `rating_value` value recorded in a `public` check-in at that venue, all pooled together. It's the one big number at the top of a venue's page, and it treats the four criteria as equally-weighted, interchangeable signals of "how was going here" — a product judgment, not a statistical necessity, and one that matches how virtually every comparable app (Google Maps, Yelp) shows a single overall score rather than several competing for attention.
 
-**Venue-level headline score — the one big number at the top of a venue's own page, combining everything.** Pool: every `CHECKIN_PRODUCT.rating` *and* every `rating_service`/`rating_ambiance`/`rating_value` value recorded at that venue, all pooled together. Unlike the product-level score, blending is intentional here: there's no cross-venue comparison happening on a venue's own page, so "how was visiting this place, food and experience together" is a more useful single number than two separate scores competing for attention — matching how virtually every comparable app (Google Maps, Yelp) shows one overall score, not two. This is a deliberate simplification: it treats food quality and the three experience criteria as equally-weighted, interchangeable signals of "overall experience," a product judgment, not a statistical necessity. It also means a check-in that rated more products contributes proportionally more data points than one that rated fewer (each check-in already guarantees the same 3 experience values, but product count still varies) — accepted deliberately: someone who tried and rated more of the menu has shared more signal, and it's fine for that to carry more weight.
+Because every check-in contributes exactly four values, **every check-in weighs exactly the same**. An earlier version had a second, product-level score and had to accept that a check-in rating more items carried proportionally more influence; removing the product layer ([ADR-0011](https://github.com/oburapp/obur-docs/blob/main/adr/0011-drop-product-layer-four-venue-criteria.md)) removed that asymmetry along with it.
 
-**Both levels use the same statistical procedure:**
+The four criteria are also shown individually on a venue's page — a venue whose food is excellent and whose value is poor is exactly the kind of thing the headline number averages away, and the whole reason for rating four separate things is to be able to say it.
+
+**The procedure:**
 
 1. **Volume floor.** Fewer than 10 ratings in the pool: label is *New / Low Data* (Turkish: *Yeni / Az Veri*) — the same "don't claim a tier until there's really enough evidence" standard [Steam](https://www.steampageanalyzer.com/blog/steam-review-score-thresholds) itself uses (10 reviews minimum before any label shows). Tested empirically against a smaller floor: at 3 ratings, a venue with e.g. two "Very Good" and one "Bad" (a genuinely decent showing) could compute to the single worst possible label — the interval is just too wide that early to say anything reliable. At 10, the same kind of mixed-but-mostly-positive sample lands in a sensible middle-positive band instead.
 2. **Compute a 95% confidence lower bound on the mean**, not the raw mean itself: with sample mean x̄, sample standard deviation s, and n ratings, `Lower Bound = x̄ − t(0.95, n−1) × (s / √n)`, clipped to [1.0, 4.0]. This is the same principle behind the Wilson score interval Reddit and Yelp use for exactly this "don't let a handful of votes overclaim" problem — anchored to the pool's own data (not diluted toward some unrelated global average, which is why this was chosen over a Bayesian/IMDb-style approach), and it naturally pulls the result down both when there's too little data *and* when raters genuinely disagree (a high-variance pool lands closer to *Mixed* even at healthy volume) — which is also what replaces the earlier, uncomputable "scattered / mixed" row with a real formula.
@@ -621,7 +672,7 @@ Deliberately uses different vocabulary from user input — an earlier version of
 | Very Unfavorable | Olumsuz | [1.3 – 1.6) |
 | Extremely Unfavorable | Çok Olumsuz | [1.0 – 1.3) |
 
-Only the label is ever shown to users — never the raw score or the underlying math — consistent with the "different vocabulary from input" rule above. A venue or product's own page also shows the rating count behind its label (e.g. "47 check-in'e dayanıyor") for transparency about how much evidence backs the claim. In a venue's own product listing, each item gets a light, compact indicator (not the full text label repeated down a long menu) using its own product-level score — the full text label is reserved for the one venue-level headline and each product's own dedicated page.
+Only the label is ever shown to users — never the raw score or the underlying math — consistent with the "different vocabulary from input" rule above. A venue's page also shows the check-in count behind its label (e.g. "47 check-in'e dayanıyor") for transparency about how much evidence backs the claim. The full text label is reserved for the one headline number; the four individual criteria are shown as compact indicators beneath it, not as four text labels competing with the headline.
 
 The exact cut points and the volume floor are a starting point — calibrated once real usage data comes in (§18). What's fixed now is the *procedure and its statistical grounding*, not the final numbers.
 
@@ -646,7 +697,7 @@ Badges are not a game reward — they are proof of status. Stronger than the cou
 | Badge | Tier | Earning Condition |
 |-------|-------|----------------|
 | First discoverer | Gold | Platform's first check-in at a venue |
-| Döner expert | Gold | Döner logged at 20+ different venues |
+| Döner expert | Gold | Check-ins at 20+ different venues in the döner category |
 | Kadıköy explorer | Silver | 30+ different venues in Kadıköy |
 | Loyal customer | Silver | 10+ visits to the same venue |
 | First step | Bronze | First check-in |
@@ -673,7 +724,7 @@ Permanence simplifies evaluation considerably: a badge only ever needs checking 
 
 ### Steps
 
-Throughout Steps 1–4, progress is autosaved as a `CHECKIN_DRAFT` (§17) — the flow can be closed and resumed later, including on a different device, without losing anything already entered. Nothing here is a real `CHECKIN` until Step 5's Save actually runs.
+Throughout Steps 1–3, progress is autosaved as a `CHECKIN_DRAFT` (§17) — the flow can be closed and resumed later, including on a different device, without losing anything already entered. Nothing here is a real `CHECKIN` until Step 4's Save actually runs.
 
 ```
 Step 1: Choose venue
@@ -690,24 +741,16 @@ Step 1: Choose venue
     venue; otherwise the existing 50-meter "did you mean this one?"
     prompt (§13, ADR-0009)
 
-Step 2: Choose product(s)
-  → Products previously logged at the selected venue are shown as chips
-  → Multiple selectable
-  → Searchable
-  → Not found: add a new product
-
-Step 3: Rate the products
-  → Selected products are shown as a card stack
-  → Top card is active, others wait behind it
+Step 2: Rate the venue
+  → Four criteria, one card each: taste, service, ambiance, value
+  → Top card is active, the rest wait behind it
   → Four large buttons: Bad | Average | Good | Very Good (left to right)
   → Once rated, the card flies upward and the next one appears
-  → Cannot proceed until every product is rated
-  → Bottom section — venue criteria: service, ambiance, worth it. Required,
-    not optional (see §8): every check-in guarantees exactly these three
-    additional data points toward the venue's own aggregate, regardless of
-    how many products the user happened to select in Step 2
+  → All four are required — the flow can't advance until each is rated
+    (see §8). Every check-in therefore contributes the same four data
+    points to the venue's aggregate, with no variation between check-ins
 
-Step 4: Tell the story
+Step 3: Tell the story
   → Note field: placeholder "what stood out to you the most?"
   → Typing @ autocompletes mutual followers only (§11) — no one else is
     offered as a mention target
@@ -715,10 +758,10 @@ Step 4: Tell the story
   → Photo: "add a photo — show us"
   → Visit date: defaults to today, editable
 
-Step 5: Share
-  → Summary card: venue, products, and ratings
+Step 4: Share
+  → Summary card: venue and the four ratings
   → Visibility: public (default) / close friends / private — a
-    public check-in counts toward the venue/product aggregate; a
+    public check-in counts toward the venue aggregate; a
     close-friends or private one doesn't. There is no separate
     "contribute to statistics" toggle (see ADR-0004 in obur-docs: an
     earlier draft of this flow had one, but its own description
@@ -735,9 +778,9 @@ Step 5: Share
     is deleted — the real `CHECKIN` row is what remains.
 ```
 
-### Multi-Product Decision
+### Why Four Steps, Not Five
 
-The same experience is packaged as a single check-in. The backend creates one `CHECKIN` record; each product is written as its own row in the `CHECKIN_PRODUCT` join table. The user selects multiple products at once and rates them in sequence — it feels like a single check-in while keeping the data model clean.
+An earlier version of this flow had a fifth step between the venue and the story: choosing which items were eaten and rating each one. It was removed ([ADR-0011](https://github.com/oburapp/obur-docs/blob/main/adr/0011-drop-product-layer-four-venue-criteria.md)) — at this platform's scale no individual item could accumulate enough ratings to earn a label under §8's floor, so those two steps cost every user real effort on the core action and returned nothing visible. What was eaten now lives in the note (Step 3), which tells a reader more than a number next to a dish name anyway, and the card-stack interaction that made per-item rating feel fluid was kept and pointed at the four venue criteria instead.
 
 ---
 
@@ -756,7 +799,7 @@ The same experience is packaged as a single check-in. The backend creates one `C
 **Mute is the lighter counterpart to blocking — the relationship stays intact, only feed content is affected.** Unfollowing someone (a coworker, an acquaintance) to stop seeing their check-ins can feel socially awkward in a way muting doesn't; mute solves that specific case without touching anything else:
 
 - One-directional and silent: the muted person is never notified, and nothing about the follow relationship, their visibility, or their discoverability changes for them.
-- Affects the muting user's own feed only (both layers, §12) — the muted user's content simply never surfaces there. Search, Discover, venue pages, and product pages are untouched; muting isn't hiding, it's a feed preference.
+- Affects the muting user's own feed only (both layers, §12) — the muted user's content simply never surfaces there. Search, Discover, and venue pages are untouched; muting isn't hiding, it's a feed preference.
 - Not derived from `FOLLOW` — a user can mute someone they don't follow (e.g. to keep a stranger's content out of Layer 2's algorithmic fill), unlike `CLOSE_FRIEND`.
 - No retroactive effect: existing likes, bookmarks, and notifications between the two people are untouched, and neither can be affected going forward either — muting has no bearing on any interaction, only on feed display.
 
@@ -771,13 +814,13 @@ The same experience is packaged as a single check-in. The backend creates one `C
 - Admin moderation access is never affected by a block between two other users — reports need to stay reviewable regardless of who blocked whom.
 - Aggregate ratings are untouched: they're anonymous, platform-wide numbers with no per-viewer dimension, so a block (a relationship between two specific people) has nothing to act on there.
 
-Unblocking is a real, always-available action; nothing about the earlier relationship (follow status, close-friend status) is restored automatically — same as any other reversed social action in this system.
+Unblocking is a real, always-available action; nothing about the earlier relationship (follow status, close-friend status) is restored automatically — same as any other reversed social action in this system. For the `BLOCK` schema this implies — directional storage, bidirectional enforcement — see [ADR-0010](https://github.com/oburapp/obur-docs/blob/main/adr/0010-blocking-and-reporting-schema.md).
 
 **Reporting.** Three things can be reported: a check-in (its note or photo), a user profile, or a venue — each for a different reason. Check-ins and profiles carry interpersonal-safety risk; report reasons: spam, harassment, hate speech, sexual content, violence, fake account, other — matching the categories real platforms (Instagram, Twitter/X, Reddit) converge on, not invented from scratch. A venue report is a data-quality concern instead — wrong address, wrong name, permanently closed, duplicate — and is the *only* way a venue's details ever change after creation (§13): there's no direct user-editing of any venue field, not even by whoever added it, on a real abuse precedent from another app's community-edit feature (see §4). Both kinds land in the same admin-reviewed queue.
 
 Every report goes into a queue reviewed by a human admin — deliberately **no automatic threshold-based hiding** (e.g. "N reports auto-removes it"), unlike venue verification's check-in-count filter. The two situations aren't parallel: venue verification is zero-urgency and can sit unresolved forever with no harm, while an unreviewed harassment report is a real, time-sensitive harm — but automatic hiding at low report counts is also a known abuse vector itself (coordinated false reporting to silence someone), and at Obur's expected report volume (low, at a few-hundred-user scale) manual review doesn't have the scaling problem admin-reviews-everything had for venues. A reported user can always be blocked immediately by the person affected, independent of and faster than any admin action.
 
-An admin handling a check-in or profile report can dismiss it, remove the offending content, or suspend the account (`USER.status = suspended`, §6) — kept separate from `USER.role`, since role is permission level and status is standing, and conflating them would be a mistake. Suspension is admin-only and, unlike a user's own self-service account freeze (§6), never user-reversible. An admin handling a venue report can dismiss it, correct the reported field directly, mark the venue closed (`is_active = false` — stays visible, shown transparently, see §13), or suspend it (`is_suspended = true` — hidden entirely, see §13). Like account suspension, both are admin-only and never reachable through any user-facing endpoint.
+An admin handling a check-in or profile report can dismiss it, remove the offending content, or suspend the account (`USER.status = suspended`, §6) — kept separate from `USER.role`, since role is permission level and status is standing, and conflating them would be a mistake. Suspension is admin-only and, unlike a user's own self-service account freeze (§6), never user-reversible. An admin handling a venue report can dismiss it, correct the reported field directly, mark the venue closed (`is_active = false` — stays visible, shown transparently, see §13), or suspend it (`is_suspended = true` — hidden entirely, see §13). Like account suspension, both are admin-only and never reachable through any user-facing endpoint. The two report kinds are stored as two separate tables — `CONTENT_REPORT` and `VENUE_REPORT` (§7) — precisely because their reasons, resolutions, and urgency differ this much; see [ADR-0010](https://github.com/oburapp/obur-docs/blob/main/adr/0010-blocking-and-reporting-schema.md).
 
 **Minimum standards this has to satisfy, non-negotiably:** Apple's App Store Review Guidelines §1.2 (user-generated content) requires, for any app with UGC, a mechanism to report objectionable content, a mechanism to block abusive users, published contact information a user can reach the team through, and the ability to remove content or terminate accounts in a reasonably timely way. Google Play's UGC policy asks for materially the same. These aren't aspirational — without them the app doesn't clear store review. A published support/abuse contact (even just an email address, shown in-app and in the store listing) is a small, concrete requirement that's easy to forget precisely because it's not a "feature."
 
@@ -809,7 +852,7 @@ Both layers exclude any user the account has muted (§11) or blocked (§11) — 
 
 Algorithmic content ranking signals (in priority order):
 
-1. Check-ins with high ratings in categories/products the user rates highly
+1. Check-ins at venues whose `VENUE_CATEGORY` the user rates highly — the taste-overlap signal, keyed on venue category since there is no per-item data (§13)
 2. Content from the user's current city
 3. Like count
 
@@ -817,7 +860,7 @@ Algorithmic content is visually distinguished: a thin line on the left edge of t
 
 ### Discover Page Ranking
 
-When a user searches "Kadıköy döner":
+When a user searches "Kadıköy dönerci" — a category plus a district, not a dish, since ranking is venue-level throughout (§13):
 
 1. Aggregate rating (primary)
 2. Check-in count (secondary)
@@ -831,7 +874,7 @@ A hashtag's own page lists every `public` check-in and list carrying it, most re
 
 ---
 
-## 13. Venue and Product Architecture
+## 13. Venue Architecture
 
 ### Venue Identity
 
@@ -842,9 +885,9 @@ Identity is built on coordinates, not on name. The `(lat, lng)` pair is the prim
 
 For cases like malls where multiple venues can share the same coordinates, the free-text `address_note` field is used ("3rd floor", "Block B entrance") — and the exact-match layer above is exactly what keeps that same scenario from producing false "possible duplicate" prompts once a venue actually has a `google_places_id`, since two different businesses in the same mall get two different Google identities.
 
-Every venue also records a `district` (ilçe) alongside `city` — required going forward, since "city" alone can't express "Kadıköy" as a scope for discovery, badges (§9), or product rankings (§13, below).
+Every venue also records a `district` (ilçe) alongside `city` — required going forward, since "city" alone can't express "Kadıköy" as a scope for discovery, badges (§9), or category-scoped rankings (§12).
 
-**Verification is a cosmetic signal, not a quality one.** A venue can be marked verified once either a Google Places match plus at least N independent **public** check-ins confirm it, or — for venues Google hasn't indexed — both at least M independent **public** check-ins accumulate *and* an admin separately confirms it. Both conditions are required in the no-Google-match case, not either alone — the check-in count filters which venues are even worth an admin's time, it isn't a substitute for the admin's look. Only `public` check-ins count toward N/M, the same restriction the aggregate rating already applies (§8, §10 Step 5) — a `close_friends`/`private` check-in is real evidence to the person who made it, but counting it here would let a location get the platform's public "verified" mark off the back of a share nobody outside that circle ever saw, which undercuts the point of the visibility choice the same way it would for the aggregate label. It never affects search ranking or discoverability; it only answers "does this location definitely exist here?" See ADR-0009.
+**Verification is a cosmetic signal, not a quality one.** A venue can be marked verified once either a Google Places match plus at least N independent **public** check-ins confirm it, or — for venues Google hasn't indexed — both at least M independent **public** check-ins accumulate *and* an admin separately confirms it. Both conditions are required in the no-Google-match case, not either alone — the check-in count filters which venues are even worth an admin's time, it isn't a substitute for the admin's look. Only `public` check-ins count toward N/M, the same restriction the aggregate rating already applies (§8, §10 Step 4) — a `close_friends`/`private` check-in is real evidence to the person who made it, but counting it here would let a location get the platform's public "verified" mark off the back of a share nobody outside that circle ever saw, which undercuts the point of the visibility choice the same way it would for the aggregate label. It never affects search ranking or discoverability; it only answers "does this location definitely exist here?" See ADR-0009.
 
 **No user can edit a venue directly, not even whoever added it.** Every correction — wrong address, wrong name, permanently closed, duplicate — goes through the same report mechanism as check-ins and profiles (§11), reviewed by an admin before anything changes. Direct community editing was considered and rejected: unmoderated edits to shared location data have a real abuse precedent (see §4), and the risk isn't worth the convenience.
 
@@ -856,31 +899,31 @@ Every venue also records a `district` (ilçe) alongside `city` — required goin
 
 **The photo is clickable through to its source check-in.** Not a prominent "photo by @username" credit sitting next to the image — that would visually compete with the "first discoverer" badge and risk exactly the confusion it's meant to avoid — just the image itself, tappable, taking the viewer to that check-in. The venue page already lists every check-in at that venue, so this doesn't expose anything not already reachable, just shortens the path; it's also a small, low-friction reward for contributing a photo good enough to represent the place, without inventing a new badge or mechanic for it.
 
-### Product Hierarchy
+### Venue Categorization
 
 ```
 VENUE_CATEGORY (hierarchical)
   └── food
-        └── pide
-              └── kuşbaşılı pide ← GLOBAL_PRODUCT_TYPE
-
-PRODUCT (venue-specific)
-  venue_id    → Karadeniz Pide
-  global_type_id → kuşbaşılı pide
-  name        → "Karadeniz Pide — kuşbaşılı pide"
+        ├── kebap
+        ├── pide
+        └── doner  ← VENUE.category_id points at the deepest matching node
 ```
 
-This structure answers two questions at once: "what's available at this venue?" and "where's the best kuşbaşılı pide?" The category list is defined by the team initially; users can suggest a new type.
+A venue carries exactly one `category_id`, and it is the platform's only classification dimension: there is no per-item layer beneath it ([ADR-0011](https://github.com/oburapp/obur-docs/blob/main/adr/0011-drop-product-layer-four-venue-criteria.md)). Three separate things read it — Discover's filters, §12's Layer-2 ranking signal, and Personalized History below — so its granularity directly determines how specific each of those can be. "Dönerci" is a useful answer; "yiyecek yeri" is not.
 
-### Difference Between Venue and Product Pages
+The catalog is defined by the team, not by users. Two things keep that from becoming the same dead end the removed product catalog had: venue types are a genuinely bounded set with published external taxonomies to draw on, and a venue is created rarely — unlike an item, which was chosen on every single check-in. Where a venue doesn't match any leaf, the parent is always a valid answer, so the flow never blocks; a category that turns out wrong is corrected by an admin through the same report mechanism as any other venue field (§11), permanently and for everyone.
 
-**Venue page:** every product at that venue with aggregate ratings, service/ambiance/value averages, all check-ins, the first discoverer — the *only* "first" badge in the system; there's no separate "first to try this product" concept (see §9).
+### The Venue Page
 
-**Product page:** check-ins for that specific product at that venue, plus a "diğer mekanlar" (other venues) ranking of every `PRODUCT` sharing the same `GLOBAL_PRODUCT_TYPE`, sorted by that product's own product-level score (§8) — the same pure, never-blended-with-venue-experience number shown as its label, reused here as a sort key rather than a display value — "where's the best kuşbaşılı pide?" answered directly. Optionally scoped by `district`/`city`. This ranking is the same underlying component surfaced a second way from Discover's product filter, not a separate feature.
+Its headline aggregate rating and the four criteria behind it (§8), every check-in at the venue, its photos, and the first discoverer — the *only* "first" badge in the system (see §9).
+
+There is no product page and no cross-venue item ranking. Both existed in an earlier version of this document and were removed with the product layer; see [ADR-0011](https://github.com/oburapp/obur-docs/blob/main/adr/0011-drop-product-layer-four-venue-criteria.md) for why, and §6's v2.0 table for the conditions under which the question becomes answerable again.
 
 ### Personalized History
 
-A user's own profile shows their single highest-rated `CHECKIN_PRODUCT` per `GLOBAL_PRODUCT_TYPE` they've rated ("en iyi döner: Develi, en iyi kahve: Petra") — a lightweight, no-new-schema read over data that already exists, meant to reinforce a sense of discovery and progress on the user's own profile rather than to rank anything for other people.
+A user's own profile shows their single highest-rated venue per `VENUE_CATEGORY` they've checked into ("en iyi dönerci: Develi, en iyi kafe: Petra") — a lightweight, no-new-schema read over data that already exists, meant to reinforce a sense of discovery and progress on the user's own profile rather than to rank anything for other people.
+
+Unlike everything else derived from ratings in this document, it needs no volume floor: it reports the user's *own* rating, not a platform statistic, so it works from their first check-in. Its specificity is entirely a function of how granular the category catalog above is.
 
 ---
 
@@ -901,7 +944,7 @@ A user's own profile shows their single highest-rated `CHECKIN_PRODUCT` per `GLO
 
 | Component | Technology | Rationale |
 |---------|-----------|---------|
-| Framework | Next.js | SSR for SEO, venue/product pages are crawlable |
+| Framework | Next.js | SSR for SEO, venue pages are crawlable |
 | Styling | Tailwind CSS + shadcn/ui | Fast UI development, consistent component set |
 | Map | Mapbox GL JS | Cheaper than Google Maps, freedom to customize |
 | Deploy | Vercel | Native for Next.js, free hobby plan |
@@ -970,7 +1013,7 @@ The first city is Istanbul. 500 users in 1 city gets far closer to critical mass
 
 ### Offline & Draft Reliability
 
-**A check-in must never be silently lost to a bad connection — this is an MVP requirement, not a client-side nicety.** The check-in flow is the platform's core action, takes real effort to complete (venue, ratings, photo, note across 5 steps, §10), and the venue interiors it's used in are exactly where a mobile connection is least reliable. Losing that data to a dropped connection is a core-loop failure, held to the same "not optional polish" bar as blocking or reporting (§4) — not a "nice if the client gets to it" item.
+**A check-in must never be silently lost to a bad connection — this is an MVP requirement, not a client-side nicety.** The check-in flow is the platform's core action, takes real effort to complete (venue, four ratings, photo, note across 4 steps, §10), and the venue interiors it's used in are exactly where a mobile connection is least reliable. Losing that data to a dropped connection is a core-loop failure, held to the same "not optional polish" bar as blocking or reporting (§4) — not a "nice if the client gets to it" item.
 
 Two distinct mechanisms cover two distinct moments:
 
@@ -983,7 +1026,7 @@ A pending submission shows a visible "sending" state to the user who created it 
 
 **Web being a narrower client doesn't mean it's a neglected one.** Whatever web does support must stay fast and responsive — the standard here is "PC Instagram," a client so visibly an afterthought that it changed real usage behavior; Obur's web client should do less than mobile by deliberate scope, never by neglect.
 
-`CHECKIN_DRAFT` is deliberately not generalized to list or venue creation. Both lack the combination that actually justifies it: high per-submission effort bundled into one atomic request, at the exact moment a connection is weakest. Lists are built incrementally (each item add is already its own small, durable, retryable action — the existing idempotent-create pattern used elsewhere, §11, already covers it); venue creation is a handful of fields, far lower effort, and typically happens as a sub-step inside the check-in flow itself, §10, inheriting whatever protection that already has.
+`CHECKIN_DRAFT` is deliberately not generalized to list or venue creation. Both lack the combination that actually justifies it: several fields of real effort — a venue choice, four ratings, a photo, a written note — bundled into one atomic request, at the exact moment a connection is weakest. That effort dropped when the per-item step was removed from the flow (§10, ADR-0011), but it did not drop below the bar: a photo and a written note are still the most expensive things a user produces anywhere in this product, and the weak-connection argument is untouched. Lists are built incrementally (each item add is already its own small, durable, retryable action — the existing idempotent-create pattern used elsewhere, §11, already covers it); venue creation is a handful of fields, far lower effort, and typically happens as a sub-step inside the check-in flow itself, §10, inheriting whatever protection that already has.
 
 ### Rate Limiting & Fake-Account Resistance
 
@@ -1042,7 +1085,7 @@ Targets grounded in published, external standards rather than picked arbitrarily
 - **Check-in creation is deliberately exempt from that tier.** Its heavier path — photo compression, EXIF stripping, multi-resolution generation (above), plus a synchronous verification/badge check (§9, §13) — realistically lands past 1 second, and that's acceptable as long as the UI shows explicit progress. [Published research on perceived wait time](https://uxuiprinciples.com/en/principles/response-time-limits) holds that responses under 100ms feel instant, 100ms-1s stays within a user's conscious-but-uninterrupted flow, and anything in the 1-10s range needs a visible progress indicator or users abandon the action. This is exactly why the "sending" state already decided for check-in submission (Offline & Draft Reliability, above) isn't just a nice touch — it's what keeps a multi-second submission from feeling broken.
 - **No numeric uptime target at MVP — stated explicitly, not left silently unaddressed.** Railway's hobby tier has no HA/failover guarantee, and building real redundancy would be wildly disproportionate to a 200-MAU target (§15). The one concrete decision made here: a friendly "we'll be back shortly"-style client message on unreachability, instead of a raw error — the actual uptime number itself is accepted as best-effort.
 
-**Local interaction feedback is a separate concern from network latency above, and has no excuse to ever be slow.** Selecting a rating, advancing the card stack (§10 Step 3), and similar in-flow actions never wait on the network — the check-in flow only talks to the backend once, at Step 5's Save — so these should render feedback essentially instantly (the same sub-100ms "feels instant" threshold cited above, here applied to local UI state rather than a round-trip). Concretely: the active product card reacts visibly the moment a rating is tapped, the transition to the next card reads as fluid and directional rather than an abrupt cut, and rating buttons are large, high-contrast targets — Fitts's Law again, the same principle already applied to the navigation bar's `+` button (§5). Haptic feedback on card transitions is a mobile-only affordance (no reliable equivalent exists in a web browser) — an enhancement where the platform supports it, not a requirement web has to fake.
+**Local interaction feedback is a separate concern from network latency above, and has no excuse to ever be slow.** Selecting a rating, advancing the card stack (§10 Step 2), and similar in-flow actions never wait on the network — the check-in flow only talks to the backend once, at Step 4's Save — so these should render feedback essentially instantly (the same sub-100ms "feels instant" threshold cited above, here applied to local UI state rather than a round-trip). Concretely: the active criterion card reacts visibly the moment a rating is tapped, the transition to the next card reads as fluid and directional rather than an abrupt cut, and rating buttons are large, high-contrast targets — Fitts's Law again, the same principle already applied to the navigation bar's `+` button (§5). Haptic feedback on card transitions is a mobile-only affordance (no reliable equivalent exists in a web browser) — an enhancement where the platform supports it, not a requirement web has to fake.
 
 **Celebration is deliberately reserved for genuinely special moments, not spent on every interaction.** Completing a check-in, earning a badge, and becoming a venue's "first discoverer" each warrant a distinct, visually celebratory UI moment — consistent with badges being real, permanent status (§9), not routine game-loop noise. Everything outside those three stays calm and fluid rather than competing for the same attention: treating every tap as an occasion cheapens the ones that actually are one. None of this is manipulative engagement engineering (no streaks, no loss-aversion mechanics, no manufactured urgency — deliberately ruled out, §9) — it's proven interaction-design and perception research (the same class of finding already cited above) applied in service of a product that feels well-crafted to use, not one engineered to be hard to put down.
 

@@ -70,8 +70,9 @@ on. A bookmark (`CHECKIN_BOOKMARK` / `LIST_BOOKMARK`) is a personal
 save-for-later note; nobody but the bookmarker themselves can ever see
 their own bookmark list, and there is deliberately no "count how many
 bookmarked this" anywhere in the system. Separate tables per target type
-(not a shared polymorphic table) for real foreign-key integrity, matching
-the same pattern already used for `CHECKIN_PRODUCT`.
+(not a shared polymorphic table) for real foreign-key integrity — the same
+integrity test later applied per case in
+[ADR-0010](0010-blocking-and-reporting-schema.md).
 
 Liking or bookmarking something is only possible if the actor can already
 *see* it — both actions resolve the target through its own visibility
