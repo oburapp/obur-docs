@@ -1,7 +1,14 @@
 # ADR-0002: Defer Google Places Verification
 
 **Date:** 2026-08-13
-**Status:** Accepted
+**Status:** Superseded by [ADR-0009](0009-venue-discovery-enrichment.md)
+
+> **2026-08-19 update:** the "concrete verification feature" this ADR
+> said to wait for arrived — see ADR-0009, which starts populating
+> `google_places_id` (via client-resolved Places data) and puts it to
+> use in duplicate detection. This ADR's own research (Places API
+> pricing, the reasoning for not building it speculatively) remains
+> accurate for the record of why it waited this long.
 
 ## Context
 
