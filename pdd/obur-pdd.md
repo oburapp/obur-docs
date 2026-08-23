@@ -268,6 +268,12 @@ USER
   username      VARCHAR UNIQUE           -- the handle; edits rate-limited (see §6) —
                                           -- unlike display_name, this is what search,
                                           -- mentions, and profile URLs key off of
+  username_changed_at TIMESTAMPTZ        -- NULL until the handle is first changed;
+                                          -- what the rate limit above measures
+                                          -- against. Kept on the row rather than in
+                                          -- a cache, since the window spans weeks
+                                          -- and a cache flush must not grant a fresh
+                                          -- allowance
   email         VARCHAR UNIQUE
   bio           TEXT
   avatar_url    VARCHAR

@@ -1,7 +1,7 @@
 # ADR-0011: Drop the Product Layer, Rate Venues on Four Criteria
 
 **Date:** 2026-08-23
-**Status:** Accepted (supersedes [ADR-0005](0005-checkin-fields-editable-products-immutable.md)); not yet implemented — see `docs/roadmap.md` Phase 5 in `obur-backend`
+**Status:** Accepted (supersedes [ADR-0005](0005-checkin-fields-editable-products-immutable.md))
 
 ## Context
 

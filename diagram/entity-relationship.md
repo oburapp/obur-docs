@@ -13,6 +13,7 @@ erDiagram
     string auth_provider_id
     string display_name
     string username
+    timestamp username_changed_at
     string email
     string bio
     string avatar_url
