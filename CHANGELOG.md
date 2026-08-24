@@ -92,6 +92,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   growth had no path that wasn't a silent no-op — and closes the class
   with a test that scans migrations for `app/` imports.
 
+- ADR-0013: the venue category tree classifies venue **format** and
+  nothing else. Expanding the catalog exposed that it had been mixing
+  three independent axes — format (dönerci, meyhane), cuisine (Italian,
+  sushi), and diet (vegetarian) — in one column that can carry only one.
+  The test for inclusion is "does this name a distinct kind of outing?",
+  which is sharper than format-versus-property: it admits `fine dining`
+  (a whole kind of evening, not a menu) while excluding `vegetarian` (a
+  vegan dönerci is still a dönerci). A handful of cuisines that have
+  become venue formats in Turkish usage are admitted as the exception
+  the rule anticipates. Two universal roots-plus-local-leaves layers, so
+  a second market is additive; `parent_id` already existed, so no schema
+  change. Multi-category venues were raised and deferred to a PDD §18
+  open decision rather than rejected: the two motivating examples turn
+  out to be different problems, and admitting it now would quietly turn
+  the axis back into a menu.
+
 ### Changed
 
 - Entity-relationship diagram: added `VENUE.location` (generated PostGIS

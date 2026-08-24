@@ -28,3 +28,4 @@ made — not drafted ahead of time.
 | [0010](0010-blocking-and-reporting-schema.md) | Blocking and Reporting Schema | Accepted (not yet implemented) |
 | [0011](0011-drop-product-layer-four-venue-criteria.md) | Drop the Product Layer, Rate Venues on Four Criteria | Accepted (supersedes [0005](0005-checkin-fields-editable-products-immutable.md)) |
 | [0012](0012-migrations-are-self-contained-reference-data-is-seeded.md) | Migrations Are Self-Contained; Reference Data Belongs to a Seeder | Accepted |
+| [0013](0013-venue-category-taxonomy-is-format-only.md) | The Venue Category Tree Classifies Format, Not Cuisine or Diet | Accepted |

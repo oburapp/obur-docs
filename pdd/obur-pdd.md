@@ -1102,6 +1102,7 @@ The following decisions are not yet finalized and will be evaluated once initial
 | Decision | Expected Data |
 |-------|--------------|
 | Calibration of aggregate rating thresholds | First 500 check-ins |
+| Whether a venue should carry more than one category (a bar/pub hybrid, a kebapçı that also does lahmacun) — see [ADR-0013](https://github.com/oburapp/obur-docs/blob/main/adr/0013-venue-category-taxonomy-is-format-only.md) | Real venue data. Answerable only once the catalog meets actual venues: how often a single format genuinely fails to describe a place, and whether the misses are format ambiguity or menu breadth |
 | Data volume at which the "You Might Like" shelf activates | 1000+ check-ins |
 | Badge rarity calculation period | First active user cohort |
 | TRY-based pricing (future revenue model) | After user growth |
