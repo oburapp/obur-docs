@@ -92,6 +92,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   growth had no path that wasn't a silent no-op — and closes the class
   with a test that scans migrations for `app/` imports.
 
+- ADR-0013: the venue category tree classifies venue **format** and
+  nothing else. Expanding the catalog exposed that it had been mixing
+  three independent axes — format (dönerci, meyhane), cuisine (Italian,
+  sushi), and diet (vegetarian) — in one column that can carry only one.
+  The test for inclusion is "does this name a distinct kind of outing?",
+  which is sharper than format-versus-property: it admits `fine dining`
+  (a whole kind of evening, not a menu) while excluding `vegetarian` (a
+  vegan dönerci is still a dönerci). A handful of cuisines that have
+  become venue formats in Turkish usage are admitted as the exception
+  the rule anticipates. Two universal roots-plus-local-leaves layers, so
+  a second market is additive; `parent_id` already existed, so no schema
+  change. Multi-category venues were raised and deferred to a PDD §18
+  open decision rather than rejected: the two motivating examples turn
+  out to be different problems, and admitting it now would quietly turn
+  the axis back into a menu.
+
+- ADR-0014: how rate limiting is keyed, and the narrow exception to §17's
+  position on IP data it required. Authenticated callers key on `user_id`;
+  anonymous ones on an HMAC of the resolved client address, held only for
+  the counting window. §17 rejected IP *correlation* — linking accounts
+  through a shared address — and that stays rejected; an ephemeral counter
+  builds no linkage, and refusing it would mean failing to protect
+  materially more sensitive data in order to avoid touching less
+  sensitive data. Also settles the mechanics, which matter more than the
+  policy here: the client address must be resolved rightmost-ish from
+  `X-Forwarded-For`, since the obvious leftmost reading lets an attacker
+  spoof a fresh key per request and evade the limiter entirely (a filed
+  advisory against real frameworks, not a hypothetical); a fixed-window
+  counter is chosen over a more precise sliding window because
+  address-derived keys let an attacker control key count, making
+  per-request storage a memory-exhaustion vector; and the failure mode
+  splits by tier, with writes failing closed and reads failing open.
+
+- ADR-0015: the API's error contract adopts RFC 9457 Problem Details
+  rather than the bespoke shape first proposed here, which turned out to
+  be reinventing a standard already implemented by Spring Boot, ASP.NET
+  Core, and referenced by OpenAPI. Forced by a collision that already
+  exists: a handle changed too recently and a rate-limited request both
+  return 429, and no other status fits either, so the discriminator has
+  to live in the body. `type` carries it — as a URN rather than an HTTPS
+  URL, because no production domain exists yet and a `type` value cannot
+  be changed later without breaking every client branching on it.
+  `str(exception)` stops reaching responses at around fifteen call sites,
+  per the RFC's own security considerations. Error localisation becomes
+  the client's job via `type`, so adding a language does not mean
+  translating every error server-side. Correlation uses `X-Request-ID`
+  with W3C Trace Context deferred and explicit conditions recorded for
+  when to adopt it. Logging excludes OWASP's list plus the raw client
+  address and rate-limit key, deliberately stricter than the baseline.
+
 ### Changed
 
 - Entity-relationship diagram: added `VENUE.location` (generated PostGIS
