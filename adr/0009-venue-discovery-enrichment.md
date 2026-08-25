@@ -68,13 +68,13 @@ discovery.** It answers exactly one question: "does this location
 definitely exist there?" — not a quality or trust signal about the
 venue itself. Set `true` when either:
 
-1. `google_places_id` is set *and* at least `N` independent users
+1. `google_places_id` is set *and* at least `3` independent users
    (distinct `user_id`, soft-deleted and non-`public` check-ins
    excluded) have checked in, or
-2. with no `google_places_id`, at least `M` independent users have
+2. with no `google_places_id`, at least `5` independent users have
    checked in under the same public-only rule *and* an admin has
    separately confirmed it via a new admin-only endpoint. Only
-   `public` check-ins count toward `N`/`M` — the same restriction the
+   `public` check-ins count toward either threshold — the same restriction the
    aggregate rating (PDD §8) already applies, and for the same reason:
    a `close_friends`/`private` check-in is real evidence to whoever
    made it, but letting it feed a platform-wide "verified" mark would
@@ -206,16 +206,43 @@ For venue status and editing, two more alternatives were weighed:
    had (see Context) — independent booleans keep those two concerns
    actually independent, including the case where both are true at once.
 
-**Known, not-yet-verified risk, recorded rather than hidden:** a small
-business inside a mall or office building that Google hasn't separately
-indexed could, in rare cases, have Autocomplete resolve to the parent
-building's own `place_id` instead of failing to match at all — which
-would make the exact-match layer wrongly auto-merge two different real
-businesses. This has not been tested against a real Turkish POI dataset
-yet. Before this ships, verify against at least one real mall/iş hanı
-listing and at least one small-town address (Google's Turkish
-administrative-hierarchy coverage is generally solid in major cities,
-less proven elsewhere).
+**Mall/iş hanı false-merge risk: verified against real data, 2026-08-25,
+during Phase 9 implementation.** The original concern: a small business
+inside a mall or office building that Google hasn't separately indexed
+could have Autocomplete resolve to the parent building's own
+`place_id` instead of failing to match at all, which would make the
+exact-match layer wrongly auto-merge two different real businesses.
+
+Tested against Doğubank İş Hanı in Sirkeci, Istanbul, a real, extremely
+dense building (hundreds of independent phone/electronics shops packed
+into one address), using the Places API (New) directly:
+
+- A Nearby Search within a 30-metre radius of the building's own
+  coordinates returned 20 distinct places with 20 distinct `place_id`s,
+  including several tenants whose own listed name contains "Doğubank"
+  (e.g. "Ak Elektronik - Doğubank İş Hanı"), each carrying its own id,
+  never the building's.
+- Autocomplete for a real tenant ("Ak Elektronik Doğubank") returned
+  exactly that tenant's own `place_id`, matching the Nearby Search
+  result, not the building's.
+- Autocomplete for a plausible but almost certainly unindexed tiny shop
+  name returned **no suggestions at all**, not a fallback match to the
+  building. This is the safe failure mode ADR-0009 needs: no
+  `google_places_id` at all, and `create_venue` falls through to the
+  existing 50-metre layer exactly as designed, rather than a wrong
+  exact-match merge.
+
+No case of Autocomplete substituting a parent building's identity for a
+real tenant's was observed. The risk is not disproven for every possible
+building in Turkey, but the specific, real, worst-case-shaped example
+this ADR named behaves correctly.
+
+**Small-town administrative-hierarchy coverage: also verified, same
+date.** Text Search against two real small Turkish locations
+(Şirince, a village in Selçuk/İzmir, and a pharmacy in Ardanuç, a small
+district of Artvin) both correctly resolved an
+`administrative_area_level_2` (ilçe) address component, not just major
+cities.
 
 ## Consequences
 
