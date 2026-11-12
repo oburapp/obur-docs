@@ -61,6 +61,17 @@ text, not entered in separate fields.
   notification; a removed person's mention row is deleted and their
   existing notification is left alone; someone removed and added back is
   notified again.
+- **Only newly added tokens are validated on edit.** A token already in
+  the previous note is never a reason to reject the edit. If its mention
+  was removed earlier (a "dormant" token), the edit re-checks it: an
+  eligible person gets the mention back silently, without a second
+  notification; an ineligible one stays a placeholder. Without this, a
+  dormant token would either block every future edit of the note with a
+  422, or make that person permanently unmentionable in it.
+- **Unblocking does not restore a mention by itself.** Blocking ended
+  the follow in both directions, so after an unblock the two people are
+  not mutual followers until they follow each other again. The mention
+  comes back on the author's next edit once the person is eligible.
 - **A mention that stops being valid is removed, the text is kept.**
   This happens when:
   - the check-in's visibility changes so the person can no longer see it,
@@ -68,6 +79,8 @@ text, not entered in separate fields.
     mentioned in a `close_friends` check-in (which also covers unfollow,
     since unfollowing revokes close-friend status by cascade),
   - the two people block each other (PDD §11's existing purge).
+  A frozen or suspended account's mentions are returned the same way
+  while the account is hidden.
   The token stays in the note and is returned with no username; the
   client shows a generic, localised placeholder in its place ("Obur
   kullanıcısı" / "Obur user"), the same way Instagram shows "Instagram
@@ -97,7 +110,9 @@ text, not entered in separate fields.
 ### Hashtag discovery
 
 - Two endpoints, one per content type: a tag's check-ins and a tag's
-  lists, each most recent first and paginated. Whether a client shows
+  lists, each most recent first and paginated. The tag in the path is
+  normalised the same way, so `/hashtags/Kahve` and `/hashtags/kahve`
+  are the same page. Whether a client shows
   them as tabs or one merged feed is a UI decision the API doesn't make.
 - Only `public`, non-deleted content from visible accounts.
 - **Blocked users' content is hidden in both directions; muted users'
@@ -112,6 +127,15 @@ text, not entered in separate fields.
   the parent check-in or list is; written only by its owner. The block
   purge function (`rls_purge_interactions_between`) is extended to cover
   mentions.
+- **Close-friend removal is enforced by a database trigger.** A
+  `close_friends` row disappears three ways: the owner removes the
+  person, the person unfollows, or the owner removes them as a follower.
+  The last two happen through a foreign-key cascade the application
+  never sees. An `AFTER DELETE` trigger on `close_friends` removes that
+  person's mentions from the owner's `close_friends` check-ins however
+  the row was deleted. This is a third, named exception to the
+  backend's no-raw-SQL rule, next to PostGIS queries and RLS policy DDL,
+  for the same reason as RLS itself: a guarantee no code path can forget.
 
 ## Rationale
 
