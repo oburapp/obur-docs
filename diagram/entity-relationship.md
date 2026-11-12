@@ -109,7 +109,9 @@ erDiagram
     int rating_value
     string note
     string photo_url
+    string visibility
     date visited_at
+    string visited_tz
     timestamp updated_at
     timestamp created_at
   }

@@ -142,6 +142,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   when to adopt it. Logging excludes OWASP's list plus the raw client
   address and rate-limit key, deliberately stricter than the baseline.
 
+- ADR-0018: check-in drafts and submission idempotency. Unlimited drafts,
+  each expiring 7 days after its last edit, last write wins across
+  devices, `visibility` and `visited_tz` stored on the draft. Submission
+  stays on `POST /checkins` with an optional `draft_id`. The key follows
+  the IETF Idempotency-Key header draft, a reused key with different
+  content is rejected, and existing check-ins are backfilled so the
+  column is `NOT NULL`. Drafts are owner-only, with no admin access.
+
 ### Changed
 
 - Entity-relationship diagram: added `VENUE.location` (generated PostGIS
