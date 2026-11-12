@@ -1,7 +1,7 @@
 # ADR-0018: Check-in Drafts and Submission Idempotency
 
 **Date:** 2026-11-12
-**Status:** Accepted; not yet implemented, see `docs/roadmap.md` Phase 11 in `obur-backend`
+**Status:** Accepted; implemented in `obur-backend` Phase 11
 
 ## Context
 
