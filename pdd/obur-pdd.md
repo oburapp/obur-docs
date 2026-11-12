@@ -408,10 +408,12 @@ CHECKIN
                                           -- factored into a badge or aggregate must
                                           -- never be truly deleted (see ADR-0011,
                                           -- which supersedes ADR-0005)
-  idempotency_key VARCHAR               -- client-generated; UNIQUE (user_id,
-                                          -- idempotency_key) — a retried submission
+  idempotency_key UUID NOT NULL          -- client-generated, sent as the
+                                          -- Idempotency-Key header; UNIQUE (user_id,
+                                          -- idempotency_key). A retried submission
                                           -- with the same key returns this row
-                                          -- instead of creating a duplicate — see §17
+                                          -- instead of creating a duplicate; see §17
+                                          -- and ADR-0018
   created_at    TIMESTAMPTZ             -- log timestamp (UTC)
 
 CHECKIN_DRAFT
@@ -426,8 +428,14 @@ CHECKIN_DRAFT
   rating_value    SMALLINT               -- nullable, same reason
   note          TEXT
   photo_url     VARCHAR
+  visibility    VARCHAR                 -- NOT NULL, defaults to public; kept on
+                                          -- the draft so a choice made on one
+                                          -- device survives to another (ADR-0018)
   visited_at    DATE
-  updated_at    TIMESTAMPTZ             -- last autosave, drives cross-device sync
+  visited_tz    VARCHAR                 -- written together with visited_at by
+                                          -- the device that sets the date
+  updated_at    TIMESTAMPTZ             -- last autosave, drives cross-device sync;
+                                          -- the draft expires 7 days after it
   created_at    TIMESTAMPTZ
                                           -- deliberately not a CHECKIN.is_draft flag —
                                           -- a separate table makes it structurally
@@ -1023,7 +1031,7 @@ The first city is Istanbul. 500 users in 1 city gets far closer to critical mass
 
 Two distinct mechanisms cover two distinct moments:
 
-- **Before submission — an explicit, cross-device draft.** A user can save an in-progress check-in and resume it on any device, including switching from mobile to web mid-flow. This has to be server-synced, not device-local: the same "state must be consistent across every device a user is signed into" standard already applied to notification read-state (ADR-0008) applies here — a draft that only exists on the phone it was started on isn't really solving the problem for a multi-platform product. Modeled as a separate `CHECKIN_DRAFT` table (§7), not an `is_draft` flag on `CHECKIN` itself: a flag would require every aggregate-rating, badge, and feed query to remember to filter it out forever, and this platform has already hit that exact failure mode twice in Phase 4 (an existence-leak and a stale-visibility bug, both "a query somewhere forgot to filter"). A separate table makes leaking a draft into rating/badge/feed logic structurally impossible rather than a matter of developer discipline. On final submit, the draft's data becomes a real `CHECKIN` row and the draft row is deleted.
+- **Before submission — an explicit, cross-device draft.** A user can save an in-progress check-in and resume it on any device, including switching from mobile to web mid-flow. This has to be server-synced, not device-local: the same "state must be consistent across every device a user is signed into" standard already applied to notification read-state (ADR-0008) applies here — a draft that only exists on the phone it was started on isn't really solving the problem for a multi-platform product. Modeled as a separate `CHECKIN_DRAFT` table (§7), not an `is_draft` flag on `CHECKIN` itself: a flag would require every aggregate-rating, badge, and feed query to remember to filter it out forever, and this platform has already hit that exact failure mode twice in Phase 4 (an existence-leak and a stale-visibility bug, both "a query somewhere forgot to filter"). A separate table makes leaking a draft into rating/badge/feed logic structurally impossible rather than a matter of developer discipline. On final submit, the draft's data becomes a real `CHECKIN` row and the draft row is deleted. A user may hold any number of drafts; each expires 7 days after its last edit, and when two devices edit the same draft the last write wins. Details and rationale in [ADR-0018](https://github.com/oburapp/obur-docs/blob/main/adr/0018-checkin-drafts-and-idempotency.md).
 - **After submission — safe retries, not duplicates.** Once the user hits submit, a client-generated idempotency key travels with the request; retrying with the same key (because the first response never arrived, or the user tapped submit twice) returns the original check-in instead of creating a second one. This is what actually prevents a flaky connection from corrupting aggregate ratings or badge counts with duplicate check-ins.
 
 A pending submission shows a visible "sending" state to the user who created it — never to anyone else; nothing partially-submitted is ever shown as if it were a real, published check-in.
