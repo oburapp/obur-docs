@@ -70,6 +70,10 @@ CHECKIN_DRAFT
 
 ### Submission
 
+Drafts are served under `/api/v1/checkin-drafts`, not `/checkins/drafts`:
+the latter shares a path shape with `/checkins/{checkin_id}`, and which
+handler answered would then depend on router registration order.
+
 Submission goes through the existing `POST /api/v1/checkins`, with the full
 check-in payload plus an optional `draft_id`. There is no separate
 "promote this draft" endpoint.
@@ -112,6 +116,14 @@ uses.
 
 - **Existing `CHECKIN` rows are backfilled** with a random UUID by the
   migration that adds the column, and the column is **`NOT NULL`**.
+- **The in-progress `409` uses a transaction-scoped advisory lock** keyed
+  on the user and the key. Without it, PostgreSQL's unique index would
+  make a concurrent duplicate wait for the first request and then replay
+  it, so `409` would never actually be returned.
+- **A replay returns the check-in's current state**, not a stored copy of
+  the first response. Storing responses would need its own table for no
+  practical gain; the only difference arises when the check-in was edited
+  between the original request and the retry.
 
 ### Row Level Security
 
