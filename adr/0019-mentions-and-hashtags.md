@@ -1,7 +1,7 @@
 # ADR-0019: Mentions and Hashtags
 
 **Date:** 2026-11-13
-**Status:** Accepted; not yet implemented, see `docs/roadmap.md` Phase 12 in `obur-backend`
+**Status:** Accepted; implemented in `obur-backend` Phase 12
 
 ## Context
 
