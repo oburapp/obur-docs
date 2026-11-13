@@ -70,22 +70,32 @@ and checked in tests against published values. Above 100 the normal value
 (1.645) is used; the difference at 100 degrees of freedom is under 1%,
 well inside the band widths.
 
-### Scores are cached in Redis, guaranteed fresh by four layers
+### Scores are cached in Redis under a database-maintained version
 
-1. **One central invalidation point.** A database session listener sees
-   every change that can move a score, however it was made: a check-in
-   created, its ratings or visibility edited, soft- or hard-deleted, and a
-   user's status changing (which affects every venue they checked into).
-   No service calls invalidation by hand, so no new code path can forget
-   to.
-2. **Invalidation runs after commit**, never before: invalidating first
-   lets a concurrent request recompute from the old data and cache it
-   again.
-3. **A short TTL** (a named constant, 10 minutes to start) bounds how long
-   any missed case could live, and satisfies the rule that nothing is
-   cached without expiry.
-4. **A test per event** proves the score changes after each one, and a
-   test reads Redis directly to prove the key is actually gone.
+1. **The database keeps the version.** `venues.score_version` is
+   incremented by database triggers whenever something that can move the
+   score changes: a check-in inserted, deleted, or updated (ratings,
+   visibility, `deleted_at`, venue), and a user's `status` changing, which
+   bumps every venue that user checked into. Account deletion is covered
+   because its check-ins are removed by a cascade the triggers see.
+2. **The cache key carries the version**: `venue:{id}:score:v{version}`.
+   Nothing ever deletes a key by hand. A write moves the version, readers
+   stop asking for the old key, and the old key ages out. Because the bump
+   is part of the writing transaction, no reader can see the new version
+   before the data behind it is committed, so there is no
+   invalidate-before-commit race to manage.
+3. **A TTL on every key** (a named constant, 10 minutes to start) clears
+   old versions and satisfies the rule that nothing is cached without
+   expiry.
+4. **A test per event** proves the version moves and the score changes
+   after each one, including account deletion through the cascade.
+
+A first design used an ORM session listener for invalidation. It was
+dropped before implementation: account deletion runs `DELETE FROM users`
+and removes check-ins by foreign-key cascade, and bulk statements skip
+the ORM's object tracking, so the listener would silently miss exactly
+the paths hardest to remember. This follows the rule `obur-backend`'s
+`CLAUDE.md` now states for every cache derived from database data.
 
 If Redis is unavailable, the score is computed directly from the database
 rather than failing the request.
@@ -120,11 +130,12 @@ justification says.
 check-ins claim "excellent food" while the headline still says *New / Low
 Data*, the overclaiming the whole procedure exists to stop.
 
-**Redis with guarantees, not compute-on-read.** Speed on the venue page
-and, later, cheap ranking in Discover matter for the experience. The usual
-weakness of a cache, an invalidation someone forgets, is answered
-structurally: one listener instead of many call sites, after-commit
-timing, a TTL as a backstop, and tests per event.
+**Redis with a database-kept version, not compute-on-read.** Speed on the
+venue page and, later, cheap ranking in Discover matter for the
+experience. The usual weakness of a cache, an invalidation someone
+forgets, is removed rather than managed: no code invalidates anything,
+the database moves the version on every write path including the ones
+application code never sees.
 
 **Most-visited over highest-rated.** A computed "best" competes with the
 favorites a user deliberately chooses; how often someone returns is a
@@ -140,6 +151,8 @@ would need a warning to be honest. Counting per viewer needs none.
 - **Pooling four ratings per check-in, as first written.** Rejected for
   the independence problem above.
 - **Plain means for the criteria.** Rejected: overclaims at low volume.
+- **ORM session listener for invalidation.** Rejected: misses cascades
+  and bulk statements, see above.
 - **Compute on every read.** Simplest and never stale, but costly for
   Discover's ranking. **A stored running aggregate on `venues`** is fast
   but shares the cache's invalidation risk with no TTL to bound it.
@@ -157,10 +170,11 @@ would need a warning to be honest. Counting per viewer needs none.
   check-in's mean. PDD §6 and §13 change: personalized history becomes
   most-visited places.
 - `users` gains a visibility column for the most-visited list.
-- Every change that can affect a score must go through the session the
-  listener watches. A raw bulk statement that bypasses the ORM session
-  would also bypass invalidation; the TTL bounds the damage.
-- A missed invalidation can show a stale tier for up to the TTL. Accepted
-  as a backstop, not a design path.
+- The version triggers are logic outside Python: invisible from the
+  code that writes a check-in, changeable only by a new migration, and
+  not type-checked. Mitigated by naming them on the `score_version`
+  column, in the migration, and in this ADR, and by testing each one.
+- A user status change rewrites `score_version` on every venue that user
+  checked into. Status changes are rare; accepted.
 - Band cut points, the floor, and the TTL are named constants, so PDD
   §18's calibration is a value change.
