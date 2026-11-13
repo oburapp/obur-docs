@@ -31,7 +31,7 @@ made — not drafted ahead of time.
 | [0013](0013-venue-category-taxonomy-is-format-only.md) | The Venue Category Tree Classifies Format, Not Cuisine or Diet | Accepted |
 | [0014](0014-rate-limiting-keys-and-ip-minimisation.md) | Rate Limiting: Keys, IP Minimisation, and Failure Modes | Accepted |
 | [0015](0015-error-contract-and-request-correlation.md) | Error Contract, Request Correlation, and Structured Logging | Accepted |
-| [0016](0016-database-roles-and-row-level-security.md) | Database Roles and Row Level Security | Accepted (not yet implemented) |
+| [0016](0016-database-roles-and-row-level-security.md) | Database Roles and Row Level Security | Accepted |
 | [0017](0017-database-backup-strategy.md) | Database Backup Strategy | Accepted (not yet implemented) |
 | [0018](0018-checkin-drafts-and-idempotency.md) | Check-in Drafts and Submission Idempotency | Accepted |
 | [0019](0019-mentions-and-hashtags.md) | Mentions and Hashtags | Accepted |

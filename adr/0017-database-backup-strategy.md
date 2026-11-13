@@ -1,7 +1,7 @@
 # ADR-0017: Database Backup Strategy
 
 **Date:** 2026-08-24
-**Status:** Accepted (not yet implemented), planned for `obur-backend` Phase 8
+**Status:** Accepted (not yet implemented); blocked while the Railway deployment is suspended, see `docs/deployment.md` in `obur-backend`
 
 ## Context
 

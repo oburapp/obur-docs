@@ -1,7 +1,7 @@
 # ADR-0016: Database Roles and Row Level Security
 
 **Date:** 2026-08-24
-**Status:** Accepted (not yet implemented), planned for `obur-backend` Phase 8
+**Status:** Accepted; implemented in `obur-backend` Phase 8
 
 ## Context
 
