@@ -239,7 +239,7 @@ Tapping an `@mention` anywhere navigates straight to that person's profile; tapp
 | Recent likes view | A user's own like history, across check-ins and lists | P1 |
 | @ Mentions | Mutual-followers only, notifies but never overrides visibility (§11) | P1 |
 | # Hashtags | Free text, up to 5 per check-in/list, own discovery page, public-only (§11, §12) | P1 |
-| Personalized history | Profile shows the user's own highest-rated venue per venue category ("en iyi dönerci: X") — see §13 | P1 |
+| Most-visited places | Profile shows the user's five most-visited venues; private by default, own visibility setting, counted per viewer (§13, ADR-0020) | P1 |
 | Share cards | Branded, shareable image cards for a check-in/list/venue, with low-friction one-tap sharing to Instagram/WhatsApp/etc. — mostly client-side, deferred until client work starts | P1 |
 
 ### v2.0 (Next Release)
@@ -670,12 +670,12 @@ Deliberately uses different vocabulary from user input — an earlier version of
 
 Because every check-in contributes exactly four values, **every check-in weighs exactly the same**. An earlier version had a second, product-level score and had to accept that a check-in rating more items carried proportionally more influence; removing the product layer ([ADR-0011](https://github.com/oburapp/obur-docs/blob/main/adr/0011-drop-product-layer-four-venue-criteria.md)) removed that asymmetry along with it.
 
-The four criteria are also shown individually on a venue's page — a venue whose food is excellent and whose value is poor is exactly the kind of thing the headline number averages away, and the whole reason for rating four separate things is to be able to say it.
+The four criteria are also shown individually on a venue's page, each computed by the same procedure below (ADR-0020) — a venue whose food is excellent and whose value is poor is exactly the kind of thing the headline number averages away, and the whole reason for rating four separate things is to be able to say it.
 
 **The procedure:**
 
-1. **Volume floor.** Fewer than 10 ratings in the pool: label is *New / Low Data* (Turkish: *Yeni / Az Veri*) — the same "don't claim a tier until there's really enough evidence" standard [Steam](https://www.steampageanalyzer.com/blog/steam-review-score-thresholds) itself uses (10 reviews minimum before any label shows). Tested empirically against a smaller floor: at 3 ratings, a venue with e.g. two "Very Good" and one "Bad" (a genuinely decent showing) could compute to the single worst possible label — the interval is just too wide that early to say anything reliable. At 10, the same kind of mixed-but-mostly-positive sample lands in a sensible middle-positive band instead.
-2. **Compute a 95% confidence lower bound on the mean**, not the raw mean itself: with sample mean x̄, sample standard deviation s, and n ratings, `Lower Bound = x̄ − t(0.95, n−1) × (s / √n)`, clipped to [1.0, 4.0]. This is the same principle behind the Wilson score interval Reddit and Yelp use for exactly this "don't let a handful of votes overclaim" problem — anchored to the pool's own data (not diluted toward some unrelated global average, which is why this was chosen over a Bayesian/IMDb-style approach), and it naturally pulls the result down both when there's too little data *and* when raters genuinely disagree (a high-variance pool lands closer to *Mixed* even at healthy volume) — which is also what replaces the earlier, uncomputable "scattered / mixed" row with a real formula.
+1. **Volume floor.** Fewer than 10 check-ins in the pool: label is *New / Low Data* (Turkish: *Yeni / Az Veri*) — the same "don't claim a tier until there's really enough evidence" standard [Steam](https://www.steampageanalyzer.com/blog/steam-review-score-thresholds) itself uses (10 reviews minimum before any label shows). Tested empirically against a smaller floor: at 3 ratings, a venue with e.g. two "Very Good" and one "Bad" (a genuinely decent showing) could compute to the single worst possible label — the interval is just too wide that early to say anything reliable. At 10, the same kind of mixed-but-mostly-positive sample lands in a sensible middle-positive band instead.
+2. **Compute a 95% confidence lower bound on the mean**, not the raw mean itself. Each check-in is one observation, the mean of its four ratings; a visit's four ratings are not independent, so counting them separately would overstate n fourfold ([ADR-0020](https://github.com/oburapp/obur-docs/blob/main/adr/0020-venue-scoring-and-most-visited.md)). With sample mean x̄, sample standard deviation s, and n check-ins, `Lower Bound = x̄ − t(0.95, n−1) × (s / √n)`, clipped to [1.0, 4.0]. This is the same principle behind the Wilson score interval Reddit and Yelp use for exactly this "don't let a handful of votes overclaim" problem — anchored to the pool's own data (not diluted toward some unrelated global average, which is why this was chosen over a Bayesian/IMDb-style approach), and it naturally pulls the result down both when there's too little data *and* when raters genuinely disagree (a high-variance pool lands closer to *Mixed* even at healthy volume) — which is also what replaces the earlier, uncomputable "scattered / mixed" row with a real formula.
 3. **Place that lower-bound number in the band below** — a single pass, no separate per-tier volume gates or downgrade steps needed, since the confidence math already accounts for sample size on its own:
 
 | English | Türkçe | Lower-Bound Range |
@@ -937,11 +937,11 @@ Its headline aggregate rating and the four criteria behind it (§8), every check
 
 There is no product page and no cross-venue item ranking. Both existed in an earlier version of this document and were removed with the product layer; see [ADR-0011](https://github.com/oburapp/obur-docs/blob/main/adr/0011-drop-product-layer-four-venue-criteria.md) for why, and §6's v2.0 table for the conditions under which the question becomes answerable again.
 
-### Personalized History
+### Most-Visited Places
 
-A user's own profile shows their single highest-rated venue per `VENUE_CATEGORY` they've checked into ("en iyi dönerci: Develi, en iyi kafe: Petra") — a lightweight, no-new-schema read over data that already exists, meant to reinforce a sense of discovery and progress on the user's own profile rather than to rank anything for other people.
+A user's profile shows their five most-visited venues, counted from their non-deleted check-ins, ties broken by the most recent visit. It replaces an earlier "highest-rated venue per category" list ([ADR-0020](https://github.com/oburapp/obur-docs/blob/main/adr/0020-venue-scoring-and-most-visited.md)): a computed "best" competed with the favorites a user chooses deliberately, while how often someone returns is something favorites can't express.
 
-Unlike everything else derived from ratings in this document, it needs no volume floor: it reports the user's *own* rating, not a platform statistic, so it works from their first check-in. Its specificity is entirely a function of how granular the category catalog above is.
+The list has its own visibility setting (public, close friends, or private; private by default). Its counts depend on who is looking: the owner sees every check-in counted, private ones included; anyone else sees counts built only from check-ins they could see themselves, so a private check-in is never revealed indirectly.
 
 ---
 

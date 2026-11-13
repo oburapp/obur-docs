@@ -160,6 +160,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   characters each. Hashtag pages hide blocked users' content but not
   muted users'.
 
+- ADR-0020: venue scoring, caching, and most-visited places. The score's
+  observation is a check-in (the mean of its four ratings) and the floor
+  is 10 check-ins, since a visit's four ratings aren't independent. The
+  four criteria use the same procedure. Scores are cached in Redis with
+  one central after-commit invalidation point, a TTL, and a test per
+  event. Personalized "best per category" is replaced by the five
+  most-visited venues, private by default and counted per viewer.
+
 ### Changed
 
 - Entity-relationship diagram: added `VENUE.location` (generated PostGIS
