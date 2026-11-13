@@ -150,6 +150,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   content is rejected, and existing check-ins are backfilled so the
   column is `NOT NULL`. Drafts are owner-only, with no admin access.
 
+- ADR-0019: mentions and hashtags, Instagram-style and inline in the
+  text. A mention is stored as an id token so username changes follow it,
+  and only people who can see the check-in can be mentioned (max 10). A
+  mention that stops being valid is removed while the text shows a
+  generic placeholder. Hashtags match case-insensitively (NFC, Unicode
+  case folding, `İ` → `i`); a post shows a tag as typed, the tag page
+  heading shows the normalised form. Max 5 per item and 50
+  characters each. Hashtag pages hide blocked users' content but not
+  muted users'.
+
 ### Changed
 
 - Entity-relationship diagram: added `VENUE.location` (generated PostGIS
